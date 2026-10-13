@@ -10,3 +10,5 @@
 .batch-id-row button,.batch-actions button{border:1px solid #687272;background:#444b4c;color:#dce4e2;border-radius:3px;padding:3px 7px;font-size:10px}
 .batch-actions{display:flex;gap:5px;justify-content:flex-end;margin-top:7px}
 .batch-actions button{display:flex;align-items:center;gap:3px}
+
+.menu-pop a{display:block;padding:8px 12px;color:inherit;font-size:11px;white-space:nowrap}.menu-pop a:hover{background:#454b4d;text-decoration:none}.menu-pop a:focus-visible{outline:2px solid #93b6cb;outline-offset:-2px}

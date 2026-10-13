@@ -747,6 +747,7 @@ export default function App() {
           <details><summary>レイヤー</summary><div className="menu-pop"><button onClick={() => setRightTab('layers')}>レイヤーパネル</button><button onClick={() => layerFileRef.current?.click()}>画像レイヤーを追加</button><button onClick={() => setTool('text')}>文字を追加 <kbd>T</kbd></button></div></details>
           <details><summary>選択範囲</summary><div className="menu-pop"><button onClick={() => { commit(project, '', sketch); setStatus('選択範囲を解除しました'); }}>選択を解除</button><button onClick={() => { setTool('rectangle'); setMode('mask'); }}>矩形選択 <kbd>M</kbd></button></div></details>
           <details><summary>表示</summary><div className="menu-pop"><button onClick={() => setZoom(z => Math.min(160, z + 10))}>拡大</button><button onClick={() => setZoom(z => Math.max(20, z - 10))}>縮小</button><button onClick={() => setZoom(100)}>100%</button></div></details>
+          <details><summary>ヘルプ</summary><div className="menu-pop"><a href="/guide.pdf" target="_blank" rel="noopener noreferrer">図解取扱説明書・料金表 ↗</a></div></details>
         </nav>
         <div className="top-project"><span className="project-dot" /> <input aria-label="プロジェクト名" maxLength={150} value={project.name} onChange={e => updateProject(p => ({ ...p, name: e.target.value }))} /><span className="subdued">{saved ? '保存済み' : '未保存'}</span></div>
         <div className="top-actions">

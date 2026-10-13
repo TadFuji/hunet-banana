@@ -8,3 +8,4 @@ playwright-report/
 .DS_Store
 tmp/pdfs/
 docs/manual/layout-check.json
+.vercel/
