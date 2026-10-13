@@ -5,6 +5,7 @@ import path from 'node:path';
 // All screenshots use an isolated profile, a clearly fake key, and local mocked
 // API responses. Never connect to Google or inspect the user's browser profile.
 const root = path.resolve(import.meta.dirname, 'images');
+const connectionOnly = process.env.MANUAL_CAPTURE_CONNECTION_ONLY === '1';
 await mkdir(root, { recursive: true });
 const browser = await chromium.launch({ channel: 'chrome', headless: true });
 const context = await browser.newContext({ viewport: { width: 1600, height: 1080 }, deviceScaleFactor: 1.5 });
@@ -36,19 +37,21 @@ await page.locator('.startup-window').waitFor();
 await shot('startup', '.startup-window');
 await page.getByLabel('編集中の画像', { exact: true }).waitFor();
 await page.waitForFunction(() => document.querySelector('.image-canvas')?.width === 1280);
-await shot('overview');
-await shot('tool-rail', '.tool-rail');
-await shot('top-actions', '.top-actions');
+if (!connectionOnly) {
+  await shot('overview');
+  await shot('tool-rail', '.tool-rail');
+  await shot('top-actions', '.top-actions');
+}
 await page.getByRole('button', { name: 'APIキーを設定', exact: true }).click();
-await shot('key-dialog', '.key-modal');
+if (!connectionOnly) await shot('key-dialog', '.key-modal');
 await page.getByLabel('Gemini APIキー', { exact: true }).fill('MANUAL_DEMO_NOT_A_REAL_API_KEY_2026');
 await page.getByRole('button', { name: 'このタブに設定する', exact: true }).click();
 await page.getByRole('button', { name: 'キー接続中', exact: true }).click();
 await shot('key-connected', '.key-modal');
 // Refresh only the screens changed by the connection/startup update if desired.
-if (process.env.MANUAL_CAPTURE_CONNECTION_ONLY === '1') {
+if (connectionOnly) {
   await browser.close();
-  console.log('Captured startup and key dialogs with an isolated dummy-key profile.');
+  console.log('Captured only startup and connected-key screens with an isolated dummy-key profile.');
   process.exit(0);
 }
 await page.getByRole('button', { name: '閉じる', exact: true }).click();
