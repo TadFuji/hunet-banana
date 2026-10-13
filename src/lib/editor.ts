@@ -3,6 +3,7 @@ import type { MediaInput, Project } from '../types';
 const IMAGE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 const MIME = new Set(['image/png','image/jpeg','image/webp','application/pdf','video/mp4','video/webm','video/quicktime']);
 const MAX_PIXELS = 32_000_000;
+export const MAX_PROJECT_PIXELS = 128_000_000;
 export function uid():string { return crypto.randomUUID(); }
 export function loadImage(dataUrl:string):Promise<HTMLImageElement> {
   if (!IMAGE.test(dataUrl)) return Promise.reject(new Error('PNG・JPEG・WebP画像を選んでください'));
@@ -46,12 +47,21 @@ export async function fileToMedia(file:File):Promise<MediaInput> {
 export function importProject(text:string):Project {
   if(text.length>180_000_000)throw new Error('プロジェクトが大きすぎます');
   const p=JSON.parse(text);
-  if(p.version!==1 || typeof p.name!=='string' || p.name.length>150 || !Number.isInteger(p.width)||!Number.isInteger(p.height)||p.width<1||p.height<1||p.width>16384||p.height>16384||p.width*p.height>MAX_PIXELS||!Array.isArray(p.layers)||p.layers.length>40)throw new Error('プロジェクトの形式またはサイズが不正です');
+  if(!p || p.version!==1 || typeof p.name!=='string' || p.name.length>150 || !Number.isInteger(p.width)||!Number.isInteger(p.height)||p.width<1||p.height<1||p.width>16384||p.height>16384||p.width*p.height>MAX_PIXELS||!Array.isArray(p.layers)||p.layers.length>40||p.width*p.height*p.layers.length>MAX_PROJECT_PIXELS)throw new Error('プロジェクトの形式またはサイズが不正です');
   const ids=new Set<string>();
   const layers=p.layers.map((l:Record<string,unknown>)=>{if(typeof l.id!=='string'||l.id.length>100||ids.has(l.id)||typeof l.name!=='string'||l.name.length>150||typeof l.dataUrl!=='string'||!IMAGE.test(l.dataUrl)||typeof l.visible!=='boolean'||typeof l.opacity!=='number'||!Number.isFinite(l.opacity)||l.opacity<0||l.opacity>1)throw new Error('レイヤーの形式が不正です');ids.add(l.id);return {id:l.id,name:l.name,dataUrl:l.dataUrl,visible:l.visible,opacity:l.opacity};});
   return {version:1,name:p.name,width:p.width,height:p.height,layers};
 }
 export function exportProject(project:Project):Blob {return new Blob([JSON.stringify(importProject(JSON.stringify(project)))],{type:'application/json'});}
+/** Validate every embedded image before replacing the current document. */
+export async function validateProjectImages(project:Project):Promise<void> {
+  let pixels=0;
+  for(const layer of project.layers){
+    const image=await loadImage(layer.dataUrl);
+    pixels+=image.naturalWidth*image.naturalHeight;
+    if(pixels>MAX_PROJECT_PIXELS)throw new Error('レイヤー画像の合計は1億2800万画素以内にしてください');
+  }
+}
 function database():Promise<IDBDatabase>{return new Promise((resolve,reject)=>{const req=indexedDB.open('nano-banana-projects',1);req.onupgradeneeded=()=>req.result.createObjectStore('projects');req.onsuccess=()=>resolve(req.result);req.onerror=()=>reject(new Error('ローカル保存を開けませんでした'));});}
 export async function saveProject(project:Project):Promise<void>{const safe=importProject(JSON.stringify(project));const db=await database();try{await new Promise<void>((resolve,reject)=>{const tx=db.transaction('projects','readwrite');tx.objectStore('projects').put(safe,'current');tx.oncomplete=()=>resolve();tx.onerror=()=>reject(new Error('ローカル保存に失敗しました'));tx.onabort=()=>reject(new Error('ローカル保存を完了できませんでした'));});}finally{db.close();}}
 export async function restoreProject():Promise<Project|null>{const db=await database();try{return await new Promise((resolve,reject)=>{const req=db.transaction('projects').objectStore('projects').get('current');req.onsuccess=()=>{try{resolve(req.result?importProject(JSON.stringify(req.result)):null);}catch{reject(new Error('保存したプロジェクトを読み込めませんでした'));}};req.onerror=()=>reject(new Error('ローカル保存を読み込めませんでした'));});}finally{db.close();}}
