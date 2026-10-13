@@ -62,7 +62,9 @@ Googleは本番利用でサーバー経由の鍵管理を推奨します。本�
 
 ## 公開する場合の必須条件
 
-現在はローカル実装で、公開していません。公開時にはHTTPSで配信し、`security-headers.mjs` の文書用CSPとWorker用CSPを、それぞれの実レスポンスに適用します。HTMLだけのmeta設定や、Workerが親文書のCSPを自動的に引き継ぐという想定では不十分です。[MDN: WorkerのCSP](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers#content_security_policy)
+2026-10-13に https://hunet-banana-studio.vercel.app/ へHTTPSで公開しました。`security-headers.mjs` の文書用CSPとWorker用CSPが、それぞれの実レスポンスに完全一致することを、GET・HEAD・クエリ付きURLで確認しています。HTMLだけのmeta設定や、Workerが親文書のCSPを自動的に引き継ぐという想定では不十分です。[MDN: WorkerのCSP](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers#content_security_policy)
+
+Vercelには静的な本番ビルドと図解PDFだけを配信し、Geminiキーの環境変数や生成API Functionを設けていません。Production/Preview Feedbackを無効にし、公開画面に第三者スクリプトがないことを検証しました。本番ドメインの匿名アクセスは200、個別デプロイURLへの匿名アクセスはVercel認証への302を確認。POST・PUT・任意メソッドBREWは公開先で405でした。詳細は [公開記録](deployment.md) を参照してください。
 
 配布コード・依存関係・ホストの改ざんを管理し、APIキーを扱うページに第三者タグを追加しないでください。TLS終端のプロキシでヘッダーが上書きされる場合は、最終レスポンスを検証します。`dist`を任意のホストへコピーしただけの状態や、Viteの開発サーバーをそのまま公開した状態を安全な公開と扱わないでください。
 
