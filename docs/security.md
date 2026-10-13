@@ -34,7 +34,7 @@ flowchart LR
 | 配信 | Referrer-Policy、nosniff、フレーム禁止、COOP、Permissions-Policy、no-store。サーバーはGET/HEADのみ、既定は127.0.0.1 |
 | 依存 | バージョン固定とlockfile。外部CDNや分析SDKなし。npm auditを確認 |
 
-通常ページはno-referrerですが、Googleへのfetchだけ `referrerPolicy: 'origin'` を指定します。Googleのサイト制限でオリジンを判定するためで、キーやプロジェクト名をRefererに含めません。ブラウザ・Google側の制限設定により拒否される場合は、実プロジェクトで確認が必要です。
+通常ページはno-referrerですが、Googleへのfetchだけ `referrerPolicy: 'origin'` を指定します。対応する従来型キーのサイト制限ではオリジンの判定に使われることがあります。キーやプロジェクト名はRefererに含めません。新規AI StudioのAuth keyではHTTPリファラーによるアプリケーション制限を使えないため、この指定だけでキーの利用先が制限されるわけではありません。ブラウザ・Google側の制限設定により拒否される場合は、実プロジェクトで確認が必要です。
 
 ## 保存するもの・Googleへ送るもの
 
@@ -51,8 +51,8 @@ Googleは本番利用でサーバー経由の鍵管理を推奨します。本�
 
 1. このアプリ専用のキーを作る。既存の他サービスと共用しない。
 2. Googleのキー画面で、対応するキー種別に応じてGenerative Language APIへのAPI制限を設定する。
-3. 利用可能ならHTTPリファラー制限を使う。ローカルでの確認先は `http://127.0.0.1:4173/*`、公開時には実際のHTTPSオリジンだけを登録する。キー種別・Google側の制約は最新の管理画面に従う。
-4. Googleプロジェクトの割り当てを用途に合わせ、課金アラートを設定する。予算アラートは課金の強制停止ではない。
+3. 新規AI Studioのキーは通常Auth keyで、アプリケーション制限はIPアドレスのみ。HTTPリファラー制限には対応しない。IP制限を使う場合はGoogleに見える外部送信元IPを指定し、localhostや127.0.0.1は使わない。従来型キーは対応する制限が異なるため、キー種別と公式管理画面を確認する。[Googleのキー制限ガイド](https://docs.cloud.google.com/docs/authentication/api-keys#add_application_restrictions)
+4. Googleプロジェクトの割り当てを用途に合わせ、課金アラートを設定する。予算アラートは課金の強制停止ではない。AI StudioのProject spend capは実験的機能で、反映遅延やBatch等による超過があり得る。[支出上限の公式説明](https://ai.google.dev/gemini-api/docs/billing#project-spend-caps)
 5. 共有端末で使った後は切断する。不要になったキーや漏洩が疑われるキーはGoogle側で失効・交換する。
 
 実キーをチャット、README、環境ファイル、Gitに貼る必要はありません。キーの取得とGoogle側の制限設定は利用者のアカウントで行います。

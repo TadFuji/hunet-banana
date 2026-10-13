@@ -51,6 +51,8 @@ npm start
 
 ## 検証と資料
 
+図解の取扱説明書は [Banana Studio 図解取扱説明書（PDF）](output/pdf/Banana_Studio_図解取扱説明書.pdf) です。APIキーの取得から初回生成、編集、保存、料金の確認までを22ページで説明しています。再生成の手順は [説明書の制作メモ](docs/manual/README.md) を参照してください。
+
 ```sh
 npm run check
 npm run test:e2e
