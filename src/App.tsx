@@ -166,7 +166,8 @@ export default function App() {
     const pixelsChanged = previous.width !== next.width || previous.height !== next.height || previous.layers.length !== next.layers.length ||
       previous.layers.some((layer, index) => {
         const other = next.layers[index];
-        return layer.id !== other.id || layer.dataUrl !== other.dataUrl || layer.visible !== other.visible || layer.opacity !== other.opacity;
+        return layer.id !== other.id || layer.dataUrl !== other.dataUrl || layer.visible !== other.visible || layer.opacity !== other.opacity ||
+          (layer.x ?? 0) !== (other.x ?? 0) || (layer.y ?? 0) !== (other.y ?? 0);
       });
     const snapshot = { project: cloneProject(next), mask: nextMask, sketch: nextSketch };
     const h = historyRef.current;
@@ -317,7 +318,7 @@ export default function App() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(movement.below, 0, 0);
     ctx.globalAlpha = layer?.opacity ?? 1;
-    ctx.drawImage(movement.image, movement.dx, movement.dy, movement.project.width, movement.project.height);
+    ctx.drawImage(movement.image, (layer?.x ?? 0) + movement.dx, (layer?.y ?? 0) + movement.dy, movement.project.width, movement.project.height);
     ctx.globalAlpha = 1;
     ctx.drawImage(movement.above, 0, 0);
   };
@@ -399,14 +400,12 @@ export default function App() {
       const movement = moveRef.current; moveRef.current = null;
       if (!movement.dx && !movement.dy) return;
       if (!documentUnchanged(movement.revision)) return;
-      imageFromData(movement.project.layers.find(item => item.id === movement.id)!.dataUrl).then(async image => {
-        if (!documentUnchanged(movement.revision)) return;
-        const canvas = document.createElement('canvas'); canvas.width = movement.project.width; canvas.height = movement.project.height;
-        canvas.getContext('2d')!.drawImage(image, movement.dx, movement.dy, movement.project.width, movement.project.height);
-        const next = { ...movement.project, layers: movement.project.layers.map(item => item.id === movement.id ? { ...item, dataUrl: canvas.toDataURL('image/png') } : item) };
-        await validateProjectImages(next);
-        if (documentUnchanged(movement.revision) && commit(next, movement.mask, movement.sketch)) setStatus('レイヤーを移動しました');
-      }).catch(() => setError('レイヤーを移動できませんでした'));
+      // Store an offset instead of redrawing the bitmap, so pixels moved outside the canvas are kept.
+      const { width, height } = movement.project;
+      const clamp = (value: number, limit: number) => Math.max(-limit, Math.min(limit, value));
+      const next = { ...movement.project, layers: movement.project.layers.map(item => item.id === movement.id
+        ? { ...item, x: clamp((item.x ?? 0) + movement.dx, width), y: clamp((item.y ?? 0) + movement.dy, height) } : item) };
+      if (commit(next, movement.mask, movement.sketch)) setStatus('レイヤーを移動しました');
       return;
     }
     if (!drawRef.current) return;
@@ -661,8 +660,8 @@ export default function App() {
     Promise.all(original.layers.map(async layer => {
       const image = await imageFromData(layer.dataUrl);
       const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-      canvas.getContext('2d')!.drawImage(image, left, top, original.width, original.height);
-      return { ...layer, dataUrl: canvas.toDataURL('image/png') };
+      canvas.getContext('2d')!.drawImage(image, left + (layer.x ?? 0), top + (layer.y ?? 0), original.width, original.height);
+      return { ...layer, dataUrl: canvas.toDataURL('image/png'), x: undefined, y: undefined };
     })).then(layers => {
       if (documentUnchanged(snapshot.revision) && commit({ ...original, width, height, layers }, '', '')) setStatus('キャンバスを拡張しました');
     })

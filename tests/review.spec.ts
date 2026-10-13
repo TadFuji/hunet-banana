@@ -241,3 +241,34 @@ for(const panel of ['bottom','right'])test(`${panel} history restore retains its
   await page.getByLabel('プロジェクト名',{exact:true}).fill('After history restore');
   await expect.poll(()=>mask.evaluate((c:HTMLCanvasElement)=>c.toDataURL())).toBe(selected);
 });
+
+test('moving a layer off the canvas and back keeps the pixels that were outside',async({page})=>{
+  await page.goto('/');
+  const dataUrl=await page.evaluate(()=>{const c=document.createElement('canvas');c.width=64;c.height=64;const ctx=c.getContext('2d')!;ctx.fillStyle='red';ctx.fillRect(0,0,16,64);return c.toDataURL('image/png');});
+  const project={version:1,name:'Offscreen fixture',width:64,height:64,layers:[{id:'only',name:'Only',visible:true,opacity:1,dataUrl}]};
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({name:'offscreen.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(project))});
+  await expect(page.getByText('プロジェクトを読み込みました',{exact:true})).toBeVisible();
+  await expect.poll(()=>pixel(page,4,32)).toEqual([255,0,0,255]);
+  await page.getByRole('button',{name:'移動',exact:true}).click();
+  const box=(await page.getByLabel('編集キャンバス',{exact:true}).boundingBox())!;
+  const drag=async(from:number,to:number)=>{
+    await page.mouse.move(box.x+box.width*from,box.y+box.height/2);await page.mouse.down();
+    await page.waitForTimeout(100);
+    await page.mouse.move(box.x+box.width*to,box.y+box.height/2,{steps:4});await page.mouse.up();
+  };
+  await drag(.5,.25);
+  await expect(page.getByText('レイヤーを移動しました',{exact:true})).toBeVisible();
+  await expect.poll(()=>pixel(page,4,32)).toEqual([0,0,0,0]);
+  await drag(.25,.5);
+  await expect.poll(()=>pixel(page,4,32)).toEqual([255,0,0,255]);
+  // Exporting and reopening the project must keep the offset and the pixels outside the canvas.
+  await drag(.5,.25);
+  await expect.poll(()=>pixel(page,4,32)).toEqual([0,0,0,0]);
+  const download=page.waitForEvent('download');
+  await page.getByRole('button',{name:'プロジェクトを書き出す',exact:true}).click();
+  const saved=await (await download).path();
+  await page.locator('input[accept=".json,application/json"]').setInputFiles(saved);
+  await expect.poll(()=>pixel(page,4,32)).toEqual([0,0,0,0]);
+  await drag(.25,.5);
+  await expect.poll(()=>pixel(page,4,32)).toEqual([255,0,0,255]);
+});

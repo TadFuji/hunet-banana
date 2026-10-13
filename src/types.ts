@@ -10,6 +10,7 @@ export interface GeneratedImage { dataUrl:string; mimeType:string; }
 export interface Citation { title:string; url:string; }
 export interface GenerateResult { images:GeneratedImage[]; text:string; citations:Citation[]; suggestions:Citation[]; searchHtml?:string; usage:Record<string,number>; model:string; conversation:ConversationTurn[]; }
 export interface BatchJob { name:string; state:string; created?:string; images:GeneratedImage[]; errors:number; }
-export interface Layer { id:string; name:string; dataUrl:string; visible:boolean; opacity:number; }
+/** x/y offset the layer bitmap in document pixels; the bitmap keeps pixels moved outside the canvas. */
+export interface Layer { id:string; name:string; dataUrl:string; visible:boolean; opacity:number; x?:number; y?:number; }
 export interface Project { version:1; name:string; width:number; height:number; layers:Layer[]; }
 export const DEFAULT_SETTINGS:GenerationSettings={size:'1K',ratio:'1:1',thinking:'medium',webSearch:false,imageSearch:false};
