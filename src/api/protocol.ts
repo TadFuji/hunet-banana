@@ -28,9 +28,10 @@ export function decodeResult(raw:any,request:Record<string,unknown>):GenerateRes
   const meta=raw.candidates[0].groundingMetadata??raw.candidates[0].grounding_metadata??{};
   const citations:Citation[]=[];
   const chunks=meta.groundingChunks??meta.grounding_chunks;
-  for(const chunk of Array.isArray(chunks)?chunks:[]){const item=chunk?.web??chunk?.image;const url=safeUrl(item?.uri??item?.url);if(url&&!citations.some(c=>c.url===url))citations.push({url,title:typeof item.title==='string'?item.title:url});}
-  const queries=meta.webSearchQueries;
-  const suggestions:Citation[]=(Array.isArray(queries)?queries:[]).filter((q:unknown)=>typeof q==='string').map((q:string)=>({title:q,url:`https://www.google.com/search?q=${encodeURIComponent(q)}`}));
+  for(const chunk of Array.isArray(chunks)?chunks:[]){const item=chunk?.web??chunk?.image;const url=safeUrl(item?.sourceUri??item?.source_uri??item?.uri??item?.url);if(url&&!citations.some(c=>c.url===url))citations.push({url,title:typeof item.title==='string'?item.title:url});}
+  const suggestions:Citation[]=[];
+  const queryGroups=[{queries:meta.webSearchQueries??meta.web_search_queries,image:false},{queries:meta.imageSearchQueries??meta.image_search_queries,image:true}];
+  for(const group of queryGroups)for(const query of Array.isArray(group.queries)?group.queries:[]){if(typeof query!=='string')continue;const url=`https://www.google.com/search?q=${encodeURIComponent(query)}${group.image?'&udm=2':''}`;if(!suggestions.some(item=>item.url===url))suggestions.push({title:query,url});}
   const usage=Object.fromEntries(Object.entries(raw.usageMetadata??{}).filter(([,v])=>typeof v==='number'&&Number.isFinite(v)&&v>=0)) as Record<string,number>;
   const turns=[...(request.contents as ConversationTurn[]),{role:'model' as const,parts:content.parts}];
   // Keep complete user/model pairs so thought signatures survive iterative edits.
@@ -45,7 +46,7 @@ export function decodeBatch(raw:any):BatchJob {
   const state=batch.state??raw.metadata?.state??(raw.done?(raw.error?'BATCH_STATE_FAILED':'BATCH_STATE_SUCCEEDED'):'BATCH_STATE_PENDING');
   if(typeof state!=='string'||!/^[A-Z_]{1,80}$/.test(state)||!Array.isArray(entries))throw new Error('Batch応答の形式が不正です');
   const images:GeneratedImage[]=[];let errors=0;
-  for(const entry of entries){if(!entry||entry.error){errors++;continue;}try{images.push(...decodeResult(entry.response,{contents:[]}).images);}catch{errors++;}}
+  for(const entry of entries){if(!entry||entry.error){errors++;continue;}try{const result=decodeResult(entry.response,{contents:[]});if(!result.images.length){errors++;continue;}images.push(...result.images);}catch{errors++;}}
   const created=batch.createTime??raw.metadata?.createTime;
   return {name,state,created:typeof created==='string'?created:undefined,images,errors};
 }

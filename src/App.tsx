@@ -524,6 +524,7 @@ export default function App() {
     if (mode === 'mask' && !containsDrawing(maskRef.current)) { setError('選択ブラシまたは矩形選択で編集範囲を描いてください'); return; }
     if (mode === 'sketch' && !containsDrawing(sketchRef.current)) { setError('スケッチツールで線を描いてください'); return; }
     const originalProject = cloneProject(project);
+    const keySession = geminiClient.session();
     const revision = revisionRef.current;
     const maskSnapshot = canvasData(maskRef.current);
     const sketchSnapshot = canvasData(sketchRef.current);
@@ -562,7 +563,8 @@ export default function App() {
       if (mode === 'sketch') instruction += '\n2枚目は手描き指示です。線を完成画像に残さず、指示として解釈してください。';
       const requestSettings = mode === 'mask' ? { ...settings, ratio: geometry.ratio } : settings;
       const result = await geminiClient.generate({ prompt: instruction, media, settings: requestSettings,
-        history: mode === 'create' ? [] : conversationRef.current });
+        history: mode === 'create' ? [] : conversationRef.current }, keySession);
+      if (geminiClient.session() !== keySession) throw new Error('APIキーの接続が変更されたため生成を中止しました');
       const image = result.images[0]?.dataUrl;
       if (!image) throw new Error(result.text || '画像が返されませんでした');
       setCandidate({ image, original, mask: maskSnapshot, mode, revision, width: originalProject.width, height: originalProject.height,

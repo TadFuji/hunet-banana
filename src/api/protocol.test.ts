@@ -3,6 +3,30 @@ import { buildRequest,decodeResult,decodeBatch,batchName,safeUrl,statusMessage }
 import { DEFAULT_SETTINGS } from '../types';
 import { compositePixels,importProject,exportProject } from '../lib/editor';
 describe('image protocol',()=>{
+  it('keeps official image attribution and both search types while rejecting unsafe links',()=>{
+    const result=decodeResult({candidates:[{content:{parts:[{text:'result'}]},groundingMetadata:{groundingChunks:[
+      {web:{uri:'https://example.com/web',title:'Web'}},
+      {image:{sourceUri:'https://example.com/source',imageUri:'https://example.com/photo.png',uri:'https://example.com/legacy',title:'Image source'}},
+      {image:{source_uri:'https://example.com/snake',title:'Snake'}},
+      {image:{sourceUri:'https://example.com/source',title:'Duplicate'}},
+      {image:{sourceUri:'javascript:alert(1)',uri:'https://example.com/fallback'}},
+      {image:{sourceUri:'https://user:secret@example.com/source'}},
+      {image:{imageUri:'https://example.com/asset-only.png'}}
+    ],webSearchQueries:['blue & green',42],imageSearchQueries:['blue & green',null,'blue & green']}}]},{contents:[]});
+    expect(result.citations).toEqual([{url:'https://example.com/web',title:'Web'},{url:'https://example.com/source',title:'Image source'},{url:'https://example.com/snake',title:'Snake'}]);
+    expect(result.suggestions).toEqual([{title:'blue & green',url:'https://www.google.com/search?q=blue%20%26%20green'},{title:'blue & green',url:'https://www.google.com/search?q=blue%20%26%20green&udm=2'}]);
+  });
+  it('supports snake-case grounding metadata and ignores malformed search queries',()=>{
+    const read=(grounding_metadata:Record<string,unknown>)=>decodeResult({candidates:[{content:{parts:[{text:'ok'}]},grounding_metadata}]},{contents:[]});
+    expect(read({grounding_chunks:[{image:{source_uri:'https://example.com/source'}}],web_search_queries:['web'],image_search_queries:['image']})).toMatchObject({citations:[{url:'https://example.com/source'}],suggestions:[{url:'https://www.google.com/search?q=web'},{url:'https://www.google.com/search?q=image&udm=2'}]});
+    expect(read({webSearchQueries:{},imageSearchQueries:'bad'}).suggestions).toEqual([]);
+  });
+  it('counts Batch responses with no final image as errors, retaining successful images',()=>{
+    const response=(parts:Record<string,unknown>[],finishReason='STOP')=>({response:{candidates:[{content:{parts},finishReason}]}});
+    const image={inlineData:{mimeType:'image/png',data:'YQ=='}};
+    const result=decodeBatch({name:'batches/mixed',done:true,response:{inlinedResponses:{inlinedResponses:[response([image]),response([{text:'No image'}],'NO_IMAGE'),response([{text:'Text only'}]),response([]),response([{...image,thought:true}]),{error:{code:400}}]}}});
+    expect(result.state).toBe('BATCH_STATE_SUCCEEDED');expect(result.images).toHaveLength(1);expect(result.errors).toBe(5);
+  });
   it('drops oldest complete pairs to enforce 14 images across history and current input',()=>{
     const image={inlineData:{mimeType:'image/png',data:'YQ=='}};
     const history=Array.from({length:6},(_,i)=>({role:(i%2?'model':'user') as 'user'|'model',parts:[image,image,image,{thoughtSignature:String(i)}]}));

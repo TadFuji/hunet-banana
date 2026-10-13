@@ -1,9 +1,9 @@
 import { test, expect, type Page } from '@playwright/test';
 
 const KEY='DUMMY_ONLY_REVIEW_KEY_DO_NOT_USE_2026';
-async function connect(page:Page){
+async function connect(page:Page,key=KEY){
   await page.getByRole('button',{name:'APIキーを設定',exact:true}).click();
-  await page.getByLabel('Gemini APIキー',{exact:true}).fill(KEY);
+  await page.getByLabel('Gemini APIキー',{exact:true}).fill(key);
   await page.getByRole('button',{name:'このタブに設定する'}).click();
   await expect(page.getByRole('button',{name:'キー接続中'})).toBeVisible();
 }
@@ -38,6 +38,28 @@ async function holdDecode(page:Page){
 async function releaseDecode(page:Page){
   await page.evaluate(()=>{const w=window as any;w.__holdDecode=false;w.__decodeQueue.splice(0).forEach((fn:()=>void)=>fn());});
 }
+
+test('disconnect and reconnect during image preparation cannot charge the new key for the old operation',async({page,context})=>{
+  await page.goto('/');await importFixture(page);await connect(page);
+  const red=await image(page,'red');const sentKeys:string[]=[];
+  await context.route('https://generativelanguage.googleapis.com/**',async route=>{
+    sentKeys.push(route.request().headers()['x-goog-api-key']);
+    await route.fulfill({contentType:'application/json',body:JSON.stringify({candidates:[{content:{parts:[{inlineData:{mimeType:'image/png',data:red.split(',')[1]}}]}}]})});
+  });
+  await page.getByRole('tab',{name:'全体編集',exact:true}).click();await holdDecode(page);
+  await page.getByRole('button',{name:'画像を生成',exact:true}).click();
+  await page.waitForFunction(()=>(window as any).__decodeQueue.length>0);
+  await page.getByRole('button',{name:'キー接続中'}).click();
+  await page.getByRole('button',{name:'キーを破棄して切断'}).click();
+  await connect(page,'DUMMY_NEW_SESSION_REVIEW_KEY');await releaseDecode(page);
+  // The old operation must settle before asserting no request; a new explicit operation is still allowed.
+  await expect(page.getByRole('button',{name:'画像を生成',exact:true})).toBeEnabled();
+  expect(sentKeys).toEqual([]);
+  await expect(page.getByRole('dialog',{name:'生成結果の確認'})).toHaveCount(0);
+  await page.getByRole('button',{name:'画像を生成',exact:true}).click();
+  await expect(page.getByRole('dialog',{name:'生成結果の確認'})).toBeVisible();
+  expect(sentKeys).toEqual(['DUMMY_NEW_SESSION_REVIEW_KEY']);
+});
 
 test('invalid and hidden project images cannot replace the current document',async({page})=>{
   await page.goto('/');const original=await importFixture(page);

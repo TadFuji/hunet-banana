@@ -65,9 +65,11 @@ test('partial edit preserves every unselected displayed pixel even when AI redra
 test('Google search HTML is sandboxed and cannot execute scripts or load trackers', async ({ page, context }) => {
   await page.goto('/'); const image = await png(page); let externalRequests = 0;
   await context.route('https://tracker.invalid/**', route => { externalRequests++; return route.abort(); });
-  await context.route('https://generativelanguage.googleapis.com/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: image } }] }, groundingMetadata: { searchEntryPoint: { renderedContent: '<script>parent.__unsafeSearch=true</script><img src="https://tracker.invalid/pixel"><p>Search proof</p>' } } }] }) }));
+  await context.route('https://generativelanguage.googleapis.com/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: image } }] }, groundingMetadata: { groundingChunks: [{image: {sourceUri: 'https://example.com/image-source', imageUri: 'https://example.com/image.png', title: 'Image attribution'}}], imageSearchQueries: ['red apple'], searchEntryPoint: { renderedContent: '<script>parent.__unsafeSearch=true</script><img src="https://tracker.invalid/pixel"><p>Search proof</p>' } } }] }) }));
   await connect(page); await page.getByRole('tab', { name: '新規生成', exact: true }).click(); await page.getByRole('button', { name: '画像を生成', exact: true }).click();
   await expect(page.frameLocator('iframe[title="Google検索の提案"]').getByText('Search proof')).toBeVisible();
+  await expect(page.getByRole('link', {name: 'Image attribution', exact: true})).toHaveAttribute('href', 'https://example.com/image-source');
+  await expect(page.getByRole('link', {name: 'red apple', exact: true})).toHaveAttribute('href', 'https://www.google.com/search?q=red%20apple&udm=2');
   expect(await page.evaluate(() => (window as any).__unsafeSearch)).toBeUndefined(); expect(externalRequests).toBe(0);
 });
 
@@ -91,7 +93,8 @@ test('Batch create, restore, poll, and cancel use official fixed Google endpoint
   await expect.poll(() => calls.some(c => c.url.endsWith('/v1beta/batches/mock-job:cancel'))).toBe(true);
   await expect.poll(() => calls.some(c => c.url.endsWith('/v1beta/batches/mock-job') && c.body === null)).toBe(true);
   await context.unroute('https://generativelanguage.googleapis.com/**');
-  await context.route('https://generativelanguage.googleapis.com/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ name: 'batches/mock-job', done: true, response: { inlinedResponses: { inlinedResponses: [{ response: { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: image } }] } }] } }] } } }) }));
+  await context.route('https://generativelanguage.googleapis.com/**', route => route.fulfill({ contentType: 'application/json', body: JSON.stringify({ name: 'batches/mock-job', done: true, response: { inlinedResponses: { inlinedResponses: [{ response: { candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: image } }] } }] } }, {response: {candidates: [{finishReason: 'NO_IMAGE', content: {parts: [{text: 'No image'}]}}]}}] } } }) }));
   await page.getByRole('button', { name: '更新', exact: true }).click();
   await expect(page.getByRole('button', { name: '中止', exact: true })).toBeDisabled(); await expect(page.getByAltText('Batch結果 1')).toBeVisible();
+  await expect(page.locator('.batch-result')).toContainText('1枚 · エラー 1');
 });
