@@ -109,6 +109,8 @@ export default function App() {
   const [references, setReferences] = useState<MediaInput[]>([]);
   const [keyOpen, setKeyOpen] = useState(false);
   const [keyConnected, setKeyConnected] = useState(false);
+  const [keyChecking, setKeyChecking] = useState(false);
+  const [keyReport, setKeyReport] = useState('');
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('ローカル編集の準備ができました');
   const [error, setError] = useState('');
@@ -502,8 +504,14 @@ export default function App() {
       const task = geminiClient.setKey(key);
       key = '';
       await task;
-      setKeyConnected(true); setKeyOpen(false); setError(''); setStatus('APIキーをこのタブの一時メモリに設定しました');
+      setKeyConnected(true); setKeyReport(''); setKeyOpen(false); setError(''); setStatus('APIキーをこのタブの一時メモリに設定しました');
     } catch (caught) { key = ''; setError(caught instanceof Error ? caught.message : 'キーを設定できませんでした'); }
+  };
+  const diagnoseKey = async () => {
+    setKeyChecking(true); setKeyReport('確認中です。画像生成は実行しません。');
+    try { setKeyReport(await geminiClient.diagnoseModel()); }
+    catch(caught) { setKeyReport(caught instanceof Error ? caught.message : '確認できませんでした'); }
+    finally { setKeyChecking(false); }
   };
   const disconnectKey = () => {
     geminiClient.clearKey(); setKeyConnected(false); setStatus('APIキーを破棄しました'); setKeyOpen(false);
@@ -829,7 +837,7 @@ export default function App() {
       </div>
 
       {error && <div className="toast-error" role="alert"><span>{error}</span><button aria-label="エラーを閉じる" onClick={() => setError('')}><X size={17} /></button></div>}
-      {keyOpen && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setKeyOpen(false); }}><div className="modal key-modal" role="dialog" aria-modal="true" aria-label="Gemini APIキーの設定"><button className="modal-close" aria-label="閉じる" onClick={() => setKeyOpen(false)}><X size={20} /></button><div className="modal-icon"><LockKeyhole size={24} /></div><span className="eyebrow">YOUR KEY, YOUR CONTROL</span><h2>自分のキーで、自由に創作。</h2><p>Gemini APIキーはこのタブの一時メモリにのみ保持します。ブラウザの保存領域、プロジェクト、履歴には保存しません。接続解除またはタブを閉じると破棄されます。</p>{keyConnected ? <div className="key-connected-card"><Check size={18} /> キーは設定済みです。キーの値は表示できません。</div> : <><label htmlFor="gemini-key">Gemini APIキー</label><input ref={keyRef} id="gemini-key" type="password" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} name="gemini-key-temporary" placeholder="APIキーを入力" onKeyDown={e => { if (e.key === 'Enter') void connectKey(); }} /><button className="generate-button" onClick={() => void connectKey()}><KeyRound size={17} /> このタブに設定する</button></>}{keyConnected && <button className="secondary-button danger" onClick={disconnectKey}>キーを破棄して切断</button>}<a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer noopener">Google AI Studioでキーを取得 ↗</a><small>自分のAPIキーでの生成にはGoogle側の利用料金がかかる場合があります。共有端末では利用後に接続を解除してください。</small></div></div>}
+      {keyOpen && <div className="modal-backdrop" onMouseDown={e => { if (e.target === e.currentTarget) setKeyOpen(false); }}><div className="modal key-modal" role="dialog" aria-modal="true" aria-label="Gemini APIキーの設定"><button className="modal-close" aria-label="閉じる" onClick={() => setKeyOpen(false)}><X size={20} /></button><div className="modal-icon"><LockKeyhole size={24} /></div><span className="eyebrow">YOUR KEY, YOUR CONTROL</span><h2>自分のキーで、自由に創作。</h2><p>Gemini APIキーはこのタブの一時メモリにのみ保持します。ブラウザの保存領域、プロジェクト、履歴には保存しません。接続解除またはタブを閉じると破棄されます。</p>{keyConnected ? <div className="key-connected-card"><Check size={18} /> キーは設定済みです。下のボタンでモデル情報の取得を確認できます。</div> : <><label htmlFor="gemini-key">Gemini APIキー</label><input ref={keyRef} id="gemini-key" type="password" autoComplete="off" autoCorrect="off" autoCapitalize="off" spellCheck={false} name="gemini-key-temporary" placeholder="APIキーを入力" onKeyDown={e => { if (e.key === 'Enter') void connectKey(); }} /><button className="generate-button" onClick={() => void connectKey()}><KeyRound size={17} /> このタブに設定する</button></>}{keyConnected && <><button className="secondary-button" disabled={keyChecking || busy} onClick={() => void diagnoseKey()}>{keyChecking ? '確認中…' : 'モデル接続を確認（生成なし）'}</button>{keyReport && <p role="status">{keyReport}</p>}</>}{keyConnected && <button className="secondary-button danger" onClick={disconnectKey}>キーを破棄して切断</button>}<a href="https://aistudio.google.com/apikey" target="_blank" rel="noreferrer noopener">Google AI Studioでキーを取得 ↗</a><small>自分のAPIキーでの生成にはGoogle側の利用料金がかかる場合があります。共有端末では利用後に接続を解除してください。</small></div></div>}
       {candidate && <div className="modal-backdrop candidate-backdrop"><div className="candidate-modal" role="dialog" aria-modal="true" aria-label="生成結果の確認"><div className="candidate-header"><div><span className="eyebrow">RESULT PREVIEW</span><h2>生成された候補</h2></div><button className="modal-close" aria-label="候補を閉じる" onClick={() => setCandidate(null)}><X size={21} /></button></div>{isStale && <div className="stale-warning">生成中にキャンバスが変更されました。採用すると現在の編集を置き換えます。</div>}<div className="candidate-view"><img src={candidate.image} alt="Nano Banana 2.1が生成した候補" /></div><div className="candidate-body"><p>{candidate.result.text || candidate.prompt}</p>{candidate.result.citations.length > 0 && <div className="citation-list">参照：{candidate.result.citations.map((cite, i) => <a key={i} href={cite.url} target="_blank" rel="noopener noreferrer">{cite.title || cite.url}</a>)}</div>}{candidate.result.suggestions.length > 0 && <div className="citation-list">検索の提案：{candidate.result.suggestions.map((cite, i) => <a key={i} href={cite.url} target="_blank" rel="noopener noreferrer">{cite.title || cite.url}</a>)}</div>}{candidate.result.searchHtml && <iframe className="search-suggestions" title="Google検索の提案" sandbox="allow-popups allow-popups-to-escape-sandbox" referrerPolicy="no-referrer" srcDoc={`<meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'"><style>body{background:#fff;color:#222;font:12px sans-serif;margin:8px}</style>${candidate.result.searchHtml}`} />}</div><div className="candidate-actions"><button className="secondary-button" onClick={() => setCandidate(null)}>破棄</button><button className="generate-button" onClick={() => void adoptCandidate()}><Check size={18} /> キャンバスに採用</button></div></div></div>}
     </div>
   );
