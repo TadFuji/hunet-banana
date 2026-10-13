@@ -112,3 +112,26 @@ PLAYWRIGHT_BASE_URL=https://hunet-banana-studio.vercel.app npm run test:e2e
 - 検証の生成通信はダミーキーとモック。実キーの取得・使用や追加の有料生成は行っていない。
 
 ![公開された起動画面](screenshots/startup-window-public.png)
+
+## 公開後の再レビュー修正（2026-10-13）
+
+- 公開ソース: `b6e9cdd127677745c325700771a797ae742ede29`。
+- 本番デプロイ: `dpl_5uGrWEWjzdMBBWjF8BoVVNbAAVCR`、production / READY。両方の共有URLに反映済み。
+- 編集の画像準備中のキー切替で旧操作を新キーへ送信しない接続世代検査、画像検索の公式出典・検索語の表示、Batchの最終画像なし項目の失敗件数を修正。[再レビュー詳細](re-review-2026-10-13.md)。
+- TypeScript・本番ビルド・単体18件、ローカル全41件（4.3分）と画面検査を強化した2件の再実行（19.1秒）、公開URLの全41件（4.4分）が成功。依存監査は開発依存を含む全体・本番依存のみの両方で指摘0件。Astra 2担当による修正差分の独立確認でも追加の重大な指摘はない。
+- HTML・JS・CSS・Worker・PDF・アイコン・キャラクター画像の9ファイルが、本番URLの匿名HTTP200でローカルビルドとバイト一致。別名URLのHTMLも一致。個別デプロイURLはVercel認証へ302。
+- 自動テストのAPI通信は隔離Chromeのダミーキーとモック。実キーの読取・使用や有料生成を行っていない。
+
+公開ファイルのSHA-256:
+
+| ファイル | バイト数 | SHA-256 |
+|---|---:|---|
+| index.html | 638 | `19aa3178a9fd5f7531573b4fab65cd9ebd542f0f0f07e93f23243acd21578f9e` |
+| guide.pdf | 4090644 | `7a09303a4e8852ba1a0892630d37b81e23de71f9fe8a0b7c539de67c6ba08373` |
+| favicon.ico | 11491 | `e73f18d312685915f6ca10768399938d5ed6a875a8f9f2e7781a193dfdff91ae` |
+| favicon-32.png | 1850 | `9fe5aa43e75f2937526173707430a36350f9dc277bf5683ebb63966813c71cc8` |
+| apple-touch-icon.png | 33068 | `eaf23ecff9160c8906ed1ea02186cafa140601bc8735f2623f7b94fc355bdfb1` |
+| loading-character.png | 145344 | `a243db04de0902572a81f2f95d9ca137906bb77e44f0809bcaf59ac22133386b` |
+| assets/index-CU3KTy8-.css | 24362 | `43a80668abcf0a252197a677f3156b9d167e9c50ad6f629b6d7650237fbcb579` |
+| assets/index-YrsBj63-.js | 260252 | `9ae6534f5c85e7781e189a7c1d0cf656439181ca6cf683d3316fce075d684f01` |
+| assets/security.worker-iewXD48_.js | 9609 | `4749b5770d37faf60260e0c4f6392f61ca334e702c62b309bb8216657be4c511` |
