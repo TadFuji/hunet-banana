@@ -1,0 +1,68 @@
+# BYOK セキュリティ設計
+
+2026-10-13。各利用者が自身のGemini APIキーを使う構成です。運営者の共有キー、運営者の生成プロキシ、ログ収集、解析タグを設けていません。
+
+## データ経路と信頼境界
+
+```mermaid
+flowchart LR
+  U[利用者のキー入力] --> W[専用 Worker の一時メモリ]
+  E[ブラウザ内の編集画面] -->|指示・画像・履歴| W
+  W -->|HTTPS / x-goog-api-key| G[Google Gemini API]
+  G -->|候補・出典・使用量| W
+  W -->|キーを伏字にした結果| E
+  E -->|保存ボタン| I[IndexedDB の画像プロジェクト]
+  E -->|ジョブ ID と状態のみ| L[localStorage]
+  S[静的配信サーバー] -->|画面・Worker・CSP| E
+```
+
+キー入力はpassword要素を一時的に通過します。値を読み取ったら入力欄を空にし、React stateには入れずWorkerへ渡します。Workerはハードウェアの秘密保管装置ではありません。同一オリジンの悪意あるスクリプト、改ざんされた配布コード、ブラウザ拡張、開発者ツール、侵害されたOSは残余リスクです。キーがブラウザに存在するBYOK構成で「絶対に漏洩しない」との保証はできません。
+
+## 実装した対策
+
+| 対象 | 対策 |
+|---|---|
+| 永続化 | キーをCookie、各Storage、IndexedDB、ファイル、履歴に保存しない。プロジェクト書き出しは許可したスキーマだけを採用 |
+| 通信 | 固定Googleオリジンと固定APIパス。キーはヘッダーにだけ付与。credentials omit、cache no-store、redirect error |
+| URLの注入 | モデルを固定。Batch IDは `batches/[英数字・_・-]` のみ。入力からホストや任意パスを指定できない |
+| Worker | Workerレスポンス自身にもCSP。Google API以外へ接続できない。中断・180秒のタイムアウト・80MBの応答上限 |
+| 画面 | connect-src none、同一配信のスクリプトのみ、eval禁止、外部画像・フォント・埋め込み禁止。画像入力はPNG/JPEG/WebPのdata URLだけ |
+| 結果表示 | Reactのテキスト表示。リンクは認証情報のないHTTPSだけ。新規タブはnoopener/noreferrer |
+| 検索HTML | opaque originのsandbox iframe。script禁止、外部リソース禁止、form禁止。利用者がクリックする検索リンクは別タブに開く |
+| 応答・ログ | Googleの生エラー本文を画面に出さない。成功応答内のキー文字列を再帰的に伏字化。アプリの要求・応答ログを出さない |
+| 終了 | 解除、pagehide、15分無操作でWorkerをterminateし待機中の要求を解除。JavaScriptメモリの確実なゼロ化は保証しない |
+| 配信 | Referrer-Policy、nosniff、フレーム禁止、COOP、Permissions-Policy、no-store。サーバーはGET/HEADのみ、既定は127.0.0.1 |
+| 依存 | バージョン固定とlockfile。外部CDNや分析SDKなし。npm auditを確認 |
+
+通常ページはno-referrerですが、Googleへのfetchだけ `referrerPolicy: 'origin'` を指定します。Googleのサイト制限でオリジンを判定するためで、キーやプロジェクト名をRefererに含めません。ブラウザ・Google側の制限設定により拒否される場合は、実プロジェクトで確認が必要です。
+
+## 保存するもの・Googleへ送るもの
+
+- IndexedDB: 保存ボタンを押した画像プロジェクト1件。APIキー・会話・思考署名・参照PDF/動画は含まない。
+- localStorage: 最後のBatch IDと状態。過去のID全件を管理する機能ではないため、追加ジョブ作成前に必要なIDを控える。
+- タブのメモリ: 編集履歴、描画選択、参照素材、採用した生成の会話・思考署名。
+- Google: 生成時の指示、素材、必要な履歴、キー。BatchではGoogle側にジョブを作成する。
+
+キーの切断はGoogleに送った素材の削除や、Batchの中止にはなりません。Batchの中止は別のボタンで明示的に依頼します。中止要求の受理は即時停止や請求取消の保証ではありません。Googleの保持・学習利用・料金の条件はサービス契約に依存します。[GoogleのAPIキーガイド](https://ai.google.dev/gemini-api/docs/api-key)、[Gemini APIの利用条件](https://ai.google.dev/gemini-api/terms)、[Batch APIガイド](https://ai.google.dev/gemini-api/docs/batch-api)
+
+Googleは本番利用でサーバー経由の鍵管理を推奨します。本アプリは「利用者自身の鍵を運営者のサーバーに渡さない」という要件から、ブラウザ直接接続を選びました。このトレードオフを、サーバー側の秘密管理と同等の安全性とは見なしません。[APIキーガイド](https://ai.google.dev/gemini-api/docs/api-key)
+
+## 利用者側の設定
+
+1. このアプリ専用のキーを作る。既存の他サービスと共用しない。
+2. Googleのキー画面で、対応するキー種別に応じてGenerative Language APIへのAPI制限を設定する。
+3. 利用可能ならHTTPリファラー制限を使う。ローカルでの確認先は `http://127.0.0.1:4173/*`、公開時には実際のHTTPSオリジンだけを登録する。キー種別・Google側の制約は最新の管理画面に従う。
+4. Googleプロジェクトの割り当てを用途に合わせ、課金アラートを設定する。予算アラートは課金の強制停止ではない。
+5. 共有端末で使った後は切断する。不要になったキーや漏洩が疑われるキーはGoogle側で失効・交換する。
+
+実キーをチャット、README、環境ファイル、Gitに貼る必要はありません。キーの取得とGoogle側の制限設定は利用者のアカウントで行います。
+
+## 公開する場合の必須条件
+
+現在はローカル実装で、公開していません。公開時にはHTTPSで配信し、`security-headers.mjs` の文書用CSPとWorker用CSPを、それぞれの実レスポンスに適用します。HTMLだけのmeta設定や、Workerが親文書のCSPを自動的に引き継ぐという想定では不十分です。[MDN: WorkerのCSP](https://developer.mozilla.org/en-US/docs/Web/API/Web_Workers_API/Using_web_workers#content_security_policy)
+
+配布コード・依存関係・ホストの改ざんを管理し、APIキーを扱うページに第三者タグを追加しないでください。TLS終端のプロキシでヘッダーが上書きされる場合は、最終レスポンスを検証します。`dist`を任意のホストへコピーしただけの状態や、Viteの開発サーバーをそのまま公開した状態を安全な公開と扱わないでください。
+
+## 検証範囲
+
+ダミーキーとモック応答で、本番ビルドのヘッダー、Googleへのヘッダー付与、URL・本文・DOM・Storage・コンソールにキーを残さないこと、伏字、検索iframeの隔離、リダイレクト拒否、切断・再読込・アイドル切断をテストします。Astraによるソースの独立レビューを実施しました。実キーでのGoogle利用・課金・権限・リファラー制限は未検証です。レビューとテストは将来の変更や端末侵害まで含めた漏洩の不存在を証明するものではありません。
