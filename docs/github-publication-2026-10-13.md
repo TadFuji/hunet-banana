@@ -6,7 +6,6 @@
 - 公開範囲: Public
 - 既定ブランチ: `main`
 - 本番アプリ: https://hunet-banana-studio.vercel.app/
-- 開発フォルダー: `/Volumes/ROCKET_XTRM/coding/nano-banana-2-1-app`
 
 ## 公開前の確認
 

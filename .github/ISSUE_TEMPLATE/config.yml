@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: セキュリティ上の問題を非公開で報告する
+    url: https://github.com/TadFuji/hunet-banana/security/advisories/new
+    about: APIキーの値や非公開作品を添付しないでください。
+  - name: 図解の取扱説明書
+    url: https://hunet-banana-studio.vercel.app/guide.pdf
+    about: キーの設定、生成、編集、保存の手順を確認できます。
