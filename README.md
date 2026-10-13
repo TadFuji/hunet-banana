@@ -16,14 +16,17 @@ Photoshopの操作に慣れた人のための、Nano Banana 2.1 画像生成・�
 
 ## ローカルで起動
 
-Macでは、このフォルダの **`Banana Studioを起動.command` をダブルクリック**します。インストール済みのNode.js 22.12以降が必要です。ターミナルから起動する場合は以下を実行します。
+インストール済みのNode.js 22.12以降が必要です。初めてソースを取得して起動する場合は以下を実行します。
 
 ```sh
-cd /Volumes/ROCKET_XTRM/coding/nano-banana-2-1-app
+git clone https://github.com/TadFuji/hunet-banana.git
+cd hunet-banana
 npm ci --ignore-scripts
 npm run build
 npm start
 ```
+
+取得済みのフォルダでは、Mac用の **`Banana Studioを起動.command` をダブルクリック**しても起動できます。
 
 ブラウザで `http://127.0.0.1:4173` を開きます。キーがなくても、画像を開く、レイヤーを編集する、選択を描く、保存・書き出しを行うことができます。右上の「APIキーを設定」から、利用者自身のキーを入力してください。キーを設定するだけでは有料生成を実行しません。
 
@@ -63,6 +66,8 @@ npm start
 
 公開後の再レビューで、画像準備中のキー切替、画像検索の出典、Batchの画像なし応答の集計を修正しました。詳細は[再レビュー報告](docs/re-review-2026-10-13.md)を参照してください。
 
+最新の再レビューでは、単体18件、ローカルと公開URLのブラウザ検査各41件が成功しました。依存パッケージの監査も指摘0件でした。以下には、各段階で行った検証の経緯も記載しています。
+
 図解の取扱説明書は [Banana Studio 図解取扱説明書（PDF）](output/pdf/Banana_Studio_図解取扱説明書.pdf) です。APIキーの取得から初回生成、編集、保存、料金の確認までを22ページで説明しています。再生成の手順は [説明書の制作メモ](docs/manual/README.md) を参照してください。
 
 2026-10-13のAstraを中心とする独立レビューで、編集・保存・Batch・不正画像読込の指摘を修正し、単体13件・ブラウザ22件のテストが通過しました。[レビュー報告](docs/review-2026-10-13.md) に修正内容と未確認範囲を記載しています。
@@ -81,4 +86,5 @@ npm audit
 - [Nano Banana 2.1の詳細調査](docs/research-2026-10-13.md)
 - [現在のアプリ設計](docs/app-design.md)
 - [セキュリティ設計と公開条件](docs/security.md)
+- [脆弱性の報告方法](SECURITY.md)
 - [旧AI Studio向け指示](docs/ai-studio-build-prompts.md) — 方針変更前の資料。現在のBYOKアプリには適用しません。
