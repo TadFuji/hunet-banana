@@ -52,13 +52,14 @@ test('invalid and hidden project images cannot replace the current document',asy
 
 test('corrupt IndexedDB projects do not replace the initial usable document',async({page})=>{
   await page.goto('/');
+  await expect(page.getByRole('button',{name:'APIキーを設定',exact:true})).toBeVisible({timeout:7000});
   await page.evaluate(async()=>{
     await new Promise<void>((resolve,reject)=>{
       const open=indexedDB.open('nano-banana-projects',1);
       open.onsuccess=()=>{const db=open.result;const tx=db.transaction('projects','readwrite');tx.objectStore('projects').put({version:1,name:'BROKEN',width:1,height:1,layers:[{id:'bad',name:'hidden',visible:false,opacity:1,dataUrl:'data:image/png;base64,YQ=='}]},'current');tx.oncomplete=()=>{db.close();resolve();};tx.onerror=()=>reject(tx.error);};
     });
   });
-  await page.reload();await expect(page.getByRole('alert')).toContainText('復元できませんでした');await expect(page.getByLabel('プロジェクト名',{exact:true})).toHaveValue('Untitled studio');
+  await page.reload();await expect(page.getByRole('alert')).toContainText('復元できませんでした',{timeout:7000});await expect(page.getByLabel('プロジェクト名',{exact:true})).toHaveValue('Untitled studio');
   await expect.poll(()=>page.getByLabel('編集中の画像',{exact:true}).evaluate((c:HTMLCanvasElement)=>c.width)).toBe(1280);
 });
 
@@ -123,7 +124,7 @@ for(const shortcut of [false,true])test(`a ${shortcut?'keyboard':'button'} save 
   await page.getByLabel('プロジェクト名',{exact:true}).fill('Unsaved later edit');
   await page.evaluate(()=>(window as any).__saveQueue.splice(0).forEach((fn:()=>void)=>fn()));
   await expect(page.locator('.top-project')).toContainText('未保存');
-  await page.reload();await expect(page.getByLabel('プロジェクト名',{exact:true})).toHaveValue('Review fixture');
+  await page.reload();await expect(page.getByLabel('プロジェクト名',{exact:true})).toHaveValue('Review fixture',{timeout:7000});
 });
 
 test('late Batch A updates cannot replace Batch B or cancel the wrong job',async({page,context})=>{

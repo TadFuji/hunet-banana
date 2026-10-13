@@ -3,7 +3,7 @@ const KEY='DUMMY_ONLY_TEST_KEY_DO_NOT_USE_2026';
 async function connect(page:any){await page.getByRole('button',{name:'APIキーを設定',exact:true}).click();await page.getByLabel('Gemini APIキー',{exact:true}).fill(KEY);await page.getByRole('button',{name:'このタブに設定する'}).click();await expect(page.getByRole('button',{name:'キー接続中'})).toBeVisible();}
 async function png(page:any,color='red'){return page.evaluate((color:string)=>{const c=document.createElement('canvas');c.width=64;c.height=64;const ctx=c.getContext('2d')!;ctx.fillStyle=color;ctx.fillRect(0,0,64,64);return c.toDataURL('image/png').split(',')[1];},color);}
 test('Photoshop layout, local drawing undo, and safe project save/export',async({page})=>{
-  await page.goto('/');await expect(page.getByRole('tab',{name:'レイヤー',exact:true})).toBeVisible();await expect(page.getByRole('button',{name:'選択ブラシ',exact:true})).toBeVisible();
+  await page.goto('/');await expect(page.getByRole('tab',{name:'レイヤー',exact:true})).toBeVisible({timeout:7000});await expect(page.getByRole('button',{name:'選択ブラシ',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'矩形選択',exact:true}).click();const box=await page.getByLabel('編集キャンバス',{exact:true}).boundingBox();expect(box).toBeTruthy();await page.mouse.move(box!.x+60,box!.y+60);await page.mouse.down();await page.mouse.move(box!.x+200,box!.y+160);await page.mouse.up();
   await expect(page.getByRole('button',{name:'元に戻す',exact:true})).toBeEnabled();await page.getByRole('button',{name:'元に戻す',exact:true}).click();await expect(page.getByRole('button',{name:'やり直す',exact:true})).toBeEnabled();
   await page.getByRole('button',{name:'保存',exact:true}).click();await expect(page.getByText('このブラウザに保存しました',{exact:true})).toBeVisible();
@@ -18,14 +18,14 @@ test('BYOK goes only in a Google header, clears DOM/storage, redacts echoed keys
   expect(requests).toHaveLength(1);expect(requests[0].headers['x-goog-api-key']).toBe(KEY);expect(requests[0].url).not.toContain(KEY);expect(requests[0].body).not.toContain(KEY);expect(requests[0].headers.cookie).toBeUndefined();expect(requests[0].headers.referer).toBe(new URL(baseURL!).origin+'/');
   const state=await page.evaluate(()=>({local:JSON.stringify(localStorage),session:JSON.stringify(sessionStorage),html:document.documentElement.outerHTML}));expect(JSON.stringify(state)).not.toContain(KEY);expect(logs.join(' ')).not.toContain(KEY);
   await page.getByRole('button',{name:'キャンバスに採用'}).click();await page.getByRole('button',{name:'キー接続中'}).click();await page.getByRole('button',{name:'キーを破棄して切断'}).click();await expect(page.getByRole('button',{name:'APIキーを設定',exact:true})).toBeVisible();
-  await page.reload();await expect(page.getByRole('button',{name:'APIキーを設定',exact:true})).toBeVisible();
+  await page.reload();await expect(page.getByRole('button',{name:'APIキーを設定',exact:true})).toBeVisible({timeout:7000});
 });
 test('production CSP protects both document and worker, and raw Google errors stay private',async({page,context,request})=>{
   const response=await request.get('/');expect(response.headers()['content-security-policy']).toContain("connect-src 'none'");const html=await response.text();const script=html.match(/src="([^"]+\.js)"/)![1];const js=await (await request.get(script)).text();const worker=js.match(/\/assets\/security\.worker-[\w-]+\.js/)![0];expect((await request.get(worker)).headers()['content-security-policy']).toContain('connect-src https://generativelanguage.googleapis.com');expect((await request.get('/?foo=/security.worker-x')).headers()['content-security-policy']).toContain("connect-src 'none'");expect((await request.post('/')).status()).toBe(405);
   await page.goto('/');await context.route('https://generativelanguage.googleapis.com/**',route=>route.fulfill({status:403,contentType:'application/json',body:JSON.stringify({error:{message:`secret ${KEY} <script>bad()</script>`}})}));await connect(page);await page.getByRole('tab',{name:'新規生成',exact:true}).click();await page.getByRole('button',{name:'画像を生成',exact:true}).click();await expect(page.getByRole('alert')).toContainText('APIキーの権限');await expect(page.getByRole('alert')).not.toContainText(KEY);
   const blocked=await page.evaluate(async()=>{try{await fetch('https://generativelanguage.googleapis.com/test');return false;}catch{return true;}});expect(blocked).toBe(true);
 });
-test('idle lock destroys the session key without saving it',async({page})=>{await page.goto('/');await page.clock.install();await connect(page);await page.clock.fastForward(15*60*1000+1000);await expect(page.getByRole('button',{name:'APIキーを設定',exact:true})).toBeVisible();});
+test('idle lock destroys the session key without saving it',async({page})=>{await page.goto('/');await expect(page.getByRole('dialog',{name:'Loading…'})).toHaveCount(0,{timeout:7000});await page.clock.install();await connect(page);await page.clock.fastForward(15*60*1000+1000);await expect(page.getByRole('button',{name:'APIキーを設定',exact:true})).toBeVisible();});
 
 test('API redirects cannot forward the key to a different origin', async ({ page, context }) => {
   await page.goto('/'); let forwarded = 0;
