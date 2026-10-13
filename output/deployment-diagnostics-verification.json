@@ -1,0 +1,27 @@
+[
+  {
+    "path": "index.html",
+    "bytes": 402,
+    "sha256": "f538b1371d4c0afeb3e2bc8db5caf5a6725ec9a090ada6e0b8a440962b726013"
+  },
+  {
+    "path": "guide.pdf",
+    "bytes": 4090644,
+    "sha256": "7a09303a4e8852ba1a0892630d37b81e23de71f9fe8a0b7c539de67c6ba08373"
+  },
+  {
+    "path": "assets/index-CBj48v73.js",
+    "bytes": 258184,
+    "sha256": "7dedaa8e81c3d58d0fa1ec276ef22db259a4c3bd3a2d3ed8853de951352490cf"
+  },
+  {
+    "path": "assets/index-CwtLOypH.css",
+    "bytes": 19965,
+    "sha256": "8512f96c930dd269ebbcca71ed9d58e2d15ee51c5ed5f7d972bffdd7a22f32a2"
+  },
+  {
+    "path": "assets/security.worker-B1xDD4on.js",
+    "bytes": 9320,
+    "sha256": "6e73e1232a023c93f70030d93c13f5d8086c5c42910addf014a185f1d652b2af"
+  }
+]

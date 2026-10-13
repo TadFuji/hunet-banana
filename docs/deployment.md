@@ -1,6 +1,6 @@
 # Vercel公開・引き継ぎ
 
-公開先は `hunet-banana`、アカウントは `tadfujis-projects`、本番ドメインは `https://hunet-banana-studio.vercel.app/`。公開結果は以下に記録。実APIは本人のキーによる最終確認待ち。
+公開先は `hunet-banana`、アカウントは `tadfujis-projects`、本番ドメインは `https://hunet-banana-studio.vercel.app/`。公開結果は以下に記録。本人による初回の実生成でモデル利用不可のエラーが発生し、接続診断と404時の限定再試行を公開。実生成の成功は未確認。
 
 ## 配信構成
 
@@ -54,3 +54,28 @@ PLAYWRIGHT_BASE_URL=https://hunet-banana-studio.vercel.app npm run test:e2e
 | assets/security.worker-BnNFa0Lb.js | 7802 | `8ec0242e348fa203da67a86169d9f24b625ca967951e7821989641d528470ae0` |
 
 配信設定自身は公開対象のHTTP取得で比較していない。Vercelが適用した最終レスポンスのヘッダー・ルート挙動を検証している。更新メソッドの明示拒否とVercel側の処理は、あらゆる任意メソッドの永続的な拒否を証明するものではない。静的配信で書き込み用APIは存在しない。
+
+## 初回実生成エラーへの更新（2026-10-13）
+
+本人が新規生成・1K・1:1・検索オフで試し、「指定モデルまたはBatchが利用できません」のエラーを報告。スクリーンショットでも設定と公開URLを確認した。根本原因はこのメッセージだけでは確定できない。元のモデルIDとv1 generateContent経路は[Googleの公式仕様](https://ai.google.dev/gemini-api/docs/generate-content/image-generation?hl=en)と一致しており、ID誤記・v1非対応と断定していない。
+
+- 更新ソース: `85b6fd3059f02359a48c41ff3b1508e0d5789f99`。
+- デプロイ: `dpl_DZJvCGQQLSr9tq9cb6fPCSBYNKRx`、production / READY。同じ本番ドメインに反映済み。
+- キー設定に「モデル接続を確認（生成なし）」を追加。固定Googleへのモデル情報GETだけを行い、v1とv1betaの結果を固定文で表示する。画像生成と生成の課金・利用枠の確認は行わない。
+- 通常生成のv1が404の場合のみ、v1betaで同じモデル名とgenerateContent対応を確認できれば、同一本文で1回だけ生成を試す。成功したAPI版はキー接続中のみ保持する。権限・利用枠・通信断から追加生成しない。
+- Astraが重要差分を独立レビュー。診断結果の過大表示と事前GETエラーの分類を修正し、再レビューで解消を確認。
+- ビルド・単体15件、ローカルE2E38件（23.2秒）、公開E2E38件（29.6秒）が成功。いずれも生成通信はダミーキーのモック。ユーザーのキーや通信記録には触れていない。
+- 公開されたHTML・JS・CSS・Worker・説明書の全ファイルがローカルビルドと一致。公開側の文書/WorkerのCSP完全一致、HEAD/クエリ付きURL、同一オリジンのPDFと第三者script不在も再確認。
+- 更新後は本人にChromeで再読み込みし、キー設定の診断結果だけを共有するよう案内。実生成成功の確認は引き続き必要。
+
+更新後の公開ファイルSHA-256:
+
+| ファイル | バイト数 | SHA-256 |
+|---|---:|---|
+| index.html | 402 | `f538b1371d4c0afeb3e2bc8db5caf5a6725ec9a090ada6e0b8a440962b726013` |
+| guide.pdf | 4090644 | `7a09303a4e8852ba1a0892630d37b81e23de71f9fe8a0b7c539de67c6ba08373` |
+| assets/index-CBj48v73.js | 258184 | `7dedaa8e81c3d58d0fa1ec276ef22db259a4c3bd3a2d3ed8853de951352490cf` |
+| assets/index-CwtLOypH.css | 19965 | `8512f96c930dd269ebbcca71ed9d58e2d15ee51c5ed5f7d972bffdd7a22f32a2` |
+| assets/security.worker-B1xDD4on.js | 9320 | `6e73e1232a023c93f70030d93c13f5d8086c5c42910addf014a185f1d652b2af` |
+
+![接続診断画面（ダミーキーとモック応答）](screenshots/model-diagnostics.png)
