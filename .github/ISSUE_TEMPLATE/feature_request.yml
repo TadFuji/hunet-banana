@@ -1,0 +1,18 @@
+name: 機能の提案
+description: 制作中の困りごとと、実現したい操作を教えてください。
+title: '[Feature] '
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: 解決したい困りごと
+      description: どの操作で、どのような作業が難しいか教えてください。非公開素材は不要です。
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: 希望する動作
+      description: 操作例や代替方法があれば記載してください。
+    validations:
+      required: true

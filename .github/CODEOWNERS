@@ -1,0 +1,6 @@
+# Security-sensitive changes should receive an explicit maintainer review.
+* @TadFuji
+/src/api/ @TadFuji
+/security-headers.mjs @TadFuji
+/vercel-config.mjs @TadFuji
+/.github/ @TadFuji

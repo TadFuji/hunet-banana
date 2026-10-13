@@ -3,7 +3,7 @@ set -eu
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 cd "${0:A:h}"
 if ! command -v node >/dev/null || ! command -v npm >/dev/null; then
-  print 'Node.js 22.12以降をインストールしてから、もう一度起動してください。'
+  print 'Node.js 22.12以上の22系、または24系をインストールしてから、もう一度起動してください。'
   read '?Enterで終了'
   exit 1
 fi
