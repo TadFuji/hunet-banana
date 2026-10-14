@@ -272,3 +272,27 @@ test('moving a layer off the canvas and back keeps the pixels that were outside'
   await drag(.25,.5);
   await expect.poll(()=>pixel(page,4,32)).toEqual([255,0,0,255]);
 });
+
+test('a large adopted image fits the visible canvas area and zoom never changes its pixels',async({page,context})=>{
+  await page.goto('/');await importFixture(page);const big=await image(page,'green',4096,2304);
+  await context.route('https://generativelanguage.googleapis.com/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({candidates:[{content:{parts:[{inlineData:{mimeType:'image/png',data:big.split(',')[1]}}]}}]})}));
+  await connect(page);await page.getByRole('tab',{name:'新規生成',exact:true}).click();await page.getByRole('button',{name:'画像を生成',exact:true}).click();await page.getByRole('button',{name:'キャンバスに採用'}).click();
+  const canvas=page.getByLabel('編集中の画像',{exact:true});
+  await expect.poll(()=>canvas.evaluate((c:HTMLCanvasElement)=>[c.width,c.height])).toEqual([4096,2304]);
+  const viewport=page.locator('.canvas-viewport');
+  const fits=async()=>{const v=(await viewport.boundingBox())!;const c=(await canvas.boundingBox())!;return c.x>=v.x&&c.y>=v.y&&c.x+c.width<=v.x+v.width&&c.y+c.height<=v.y+v.height;};
+  await expect.poll(fits).toBe(true);
+  const fitted=(await canvas.boundingBox())!.width;
+  await page.getByRole('button',{name:'拡大',exact:true}).click();
+  await expect.poll(async()=>(await canvas.boundingBox())!.width).toBeGreaterThan(fitted);
+  await page.getByRole('button',{name:'実寸で表示',exact:true}).click();
+  await expect(page.getByLabel('表示倍率',{exact:true})).toHaveText('100%');
+  await expect.poll(async()=>Math.round((await canvas.boundingBox())!.width)).toBe(4096);
+  await page.getByRole('button',{name:'全体を表示',exact:true}).click();
+  await expect.poll(fits).toBe(true);
+  const v=(await viewport.boundingBox())!;await page.mouse.move(v.x+v.width/2,v.y+v.height/2);
+  await page.keyboard.down('Control');await page.mouse.wheel(0,-300);await page.keyboard.up('Control');
+  await expect.poll(async()=>(await canvas.boundingBox())!.width).toBeGreaterThan(fitted+1);
+  expect(await canvas.evaluate((c:HTMLCanvasElement)=>[c.width,c.height])).toEqual([4096,2304]);
+  expect(await pixel(page,4000,2200)).toEqual([0,128,0,255]);
+});

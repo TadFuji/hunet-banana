@@ -1,10 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type * as React from 'react';
 import {
   Aperture, ArrowDown, ArrowUp, Brush, Check, ChevronDown, CircleHelp, Download,
   Eraser, Eye, EyeOff, FileImage, FilePlus2, FolderOpen, ImagePlus, KeyRound,
   Layers3, LockKeyhole, Maximize2, MousePointer2, Plus, RectangleHorizontal,
-  Redo2, RotateCcw, Save, Search, Settings2, Sparkles, SquarePen, Trash2,
+  Redo2, RotateCcw, Save, Scan, Search, Settings2, Sparkles, SquarePen, Trash2,
   Type, Undo2, WandSparkles, X, ZoomIn, ZoomOut,
 } from 'lucide-react';
 import { geminiClient } from './api/client';
@@ -91,6 +91,15 @@ function nearestRatio(width: number, height: number): { ratio: string; width: nu
     x: Math.floor((workWidth - width) / 2), y: Math.floor((workHeight - height) / 2) };
 }
 
+// Display zoom only scales the on-screen canvas; the document pixels never change.
+const MIN_ZOOM = 1;
+const MAX_ZOOM = 800;
+const ZOOM_STEPS = [1, 2, 3, 5, 8, 10, 15, 20, 25, 33, 50, 67, 75, 100, 125, 150, 200, 300, 400, 600, 800];
+function stepZoom(zoom: number, direction: 1 | -1): number {
+  const next = direction > 0 ? ZOOM_STEPS.find(step => step > zoom + .01) : [...ZOOM_STEPS].reverse().find(step => step < zoom - .01);
+  return next ?? zoom;
+}
+
 function toolName(tool: Tool): string {
   return ({ move: '移動', brush: '選択ブラシ', erase: '選択を消す', rectangle: '矩形選択', sketch: 'スケッチ', text: '文字' })[tool];
 }
@@ -102,7 +111,8 @@ export default function App() {
   const [tool, setTool] = useState<Tool>('move');
   const [mode, setMode] = useState<Mode>('mask');
   const [brushSize, setBrushSize] = useState(42);
-  const [zoom, setZoom] = useState(70);
+  const [zoom, setZoomState] = useState(70);
+  const zoomAnchorRef = useRef<{ x: number; y: number; fx: number; fy: number } | null>(null);
   const [selectedLayer, setSelectedLayer] = useState<string | null>(null);
   const [prompt, setPrompt] = useState('背景を柔らかな自然光のスタジオに変え、被写体の位置と形は保ってください。');
   const [settings, setSettings] = useState<GenerationSettings>({ ...DEFAULT_SETTINGS });
@@ -145,6 +155,28 @@ export default function App() {
   const overlaysRef = useRef({ mask: '', sketch: '' });
   projectRef.current = project;
   const drawRef = useRef<{ x: number; y: number; startX: number; startY: number; revision: number; project: Project; prior?: ImageData } | null>(null);
+
+  /** Change the display zoom, keeping the document point under (clientX, clientY) or the viewport centre in place. */
+  const setZoom = (change: number | ((z: number) => number), clientX?: number, clientY?: number) => {
+    const viewport = viewportRef.current; const stage = viewport?.querySelector('.canvas-stage');
+    if (viewport && stage) {
+      const v = viewport.getBoundingClientRect(); const r = stage.getBoundingClientRect();
+      const x = clientX ?? v.left + v.width / 2; const y = clientY ?? v.top + v.height / 2;
+      zoomAnchorRef.current = { x: x - v.left, y: y - v.top, fx: (x - r.left) / r.width, fy: (y - r.top) / r.height };
+    }
+    setZoomState(z => Math.max(MIN_ZOOM, Math.min(MAX_ZOOM, typeof change === 'function' ? change(z) : change)));
+  };
+  const fitZoom = (width = projectRef.current.width, height = projectRef.current.height) => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    const surround = viewport.querySelector('.canvas-surround'); const hint = viewport.querySelector('.canvas-hint');
+    const style = surround ? getComputedStyle(surround) : null;
+    const padX = style ? parseFloat(style.paddingLeft) + parseFloat(style.paddingRight) : 70;
+    const padY = (style ? parseFloat(style.paddingTop) + parseFloat(style.paddingBottom) : 60) + (hint ? hint.getBoundingClientRect().height + 18 : 32);
+    const scale = Math.min((viewport.clientWidth - padX) / width, (viewport.clientHeight - padY) / height);
+    zoomAnchorRef.current = null;
+    setZoomState(Math.max(MIN_ZOOM, Math.min(100, Math.floor(scale * 100))));
+  };
 
   const captureDocument = () => ({ revision: revisionRef.current, project: cloneProject(projectRef.current),
     mask: overlaysRef.current.mask, sketch: overlaysRef.current.sketch });
@@ -252,6 +284,33 @@ export default function App() {
     return () => { alive = false; };
   }, [project.width, project.height, mask, sketch]);
 
+  // Fit every newly sized document (opened, generated, adopted, expanded) inside the visible canvas area.
+  useLayoutEffect(() => { fitZoom(project.width, project.height); }, [project.width, project.height]);
+
+  useLayoutEffect(() => {
+    const anchor = zoomAnchorRef.current; const viewport = viewportRef.current; const stage = viewport?.querySelector('.canvas-stage');
+    zoomAnchorRef.current = null;
+    if (!anchor || !viewport || !stage) return;
+    const v = viewport.getBoundingClientRect(); const r = stage.getBoundingClientRect();
+    viewport.scrollLeft += r.left - v.left + anchor.fx * r.width - anchor.x;
+    viewport.scrollTop += r.top - v.top + anchor.fy * r.height - anchor.y;
+  }, [zoom]);
+
+  useEffect(() => {
+    const viewport = viewportRef.current;
+    if (!viewport) return;
+    // ⌘/Ctrl + wheel and trackpad pinch (reported as ctrl + wheel) zoom around the pointer.
+    const onWheel = (event: WheelEvent) => {
+      if (!event.ctrlKey && !event.metaKey) return;
+      event.preventDefault();
+      setZoom(z => z * Math.exp(-event.deltaY * (event.deltaMode === 1 ? .05 : .002)), event.clientX, event.clientY);
+    };
+    viewport.addEventListener('wheel', onWheel, { passive: false });
+    return () => viewport.removeEventListener('wheel', onWheel);
+    // setZoom reads refs only
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const updateProject = (change: (p: Project) => Project) => commit(change(projectRef.current));
   const updateLayer = (id: string, change: (layer: Layer) => Layer) =>
     updateProject(p => ({ ...p, layers: p.layers.map(layer => layer.id === id ? change(layer) : layer) }));
@@ -284,8 +343,10 @@ export default function App() {
         })
           .catch(() => setError('ブラウザへの保存に失敗しました'));
       }
-      if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); setZoom(z => Math.min(160, z + 10)); }
-      if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); setZoom(z => Math.max(20, z - 10)); }
+      if ((event.metaKey || event.ctrlKey) && (event.key === '+' || event.key === '=')) { event.preventDefault(); setZoom(z => stepZoom(z, 1)); }
+      if ((event.metaKey || event.ctrlKey) && event.key === '-') { event.preventDefault(); setZoom(z => stepZoom(z, -1)); }
+      if ((event.metaKey || event.ctrlKey) && event.key === '0') { event.preventDefault(); fitZoom(); }
+      if ((event.metaKey || event.ctrlKey) && event.key === '1') { event.preventDefault(); setZoom(100); }
       if (event.metaKey || event.ctrlKey || event.altKey) return;
       const key = event.key.toLowerCase();
       if (key === 'v') setTool('move');
@@ -445,7 +506,6 @@ export default function App() {
       if (!documentUnchanged(snapshot.revision) || !commit(next, '', '')) return;
       setSelectedLayer(layer.id); setCandidate(null); setError(''); setStatus('画像を開きました');
       conversationRef.current = [];
-      setZoom(Math.min(100, Math.max(25, Math.round(760 / image.naturalWidth * 100))));
     } catch (caught) { setError(caught instanceof Error ? caught.message : '画像を開けませんでした'); }
   };
   const addImageLayer = async (file?: File) => {
@@ -755,7 +815,7 @@ export default function App() {
           <details><summary>画像</summary><div className="menu-pop"><button onClick={expandCanvas}>キャンバスを拡張</button></div></details>
           <details><summary>レイヤー</summary><div className="menu-pop"><button onClick={() => setRightTab('layers')}>レイヤーパネル</button><button onClick={() => layerFileRef.current?.click()}>画像レイヤーを追加</button><button onClick={() => setTool('text')}>文字を追加 <kbd>T</kbd></button></div></details>
           <details><summary>選択範囲</summary><div className="menu-pop"><button onClick={() => { commit(project, '', sketch); setStatus('選択範囲を解除しました'); }}>選択を解除</button><button onClick={() => { setTool('rectangle'); setMode('mask'); }}>矩形選択 <kbd>M</kbd></button></div></details>
-          <details><summary>表示</summary><div className="menu-pop"><button onClick={() => setZoom(z => Math.min(160, z + 10))}>拡大</button><button onClick={() => setZoom(z => Math.max(20, z - 10))}>縮小</button><button onClick={() => setZoom(100)}>100%</button></div></details>
+          <details><summary>表示</summary><div className="menu-pop"><button onClick={() => setZoom(z => stepZoom(z, 1))}>拡大</button><button onClick={() => setZoom(z => stepZoom(z, -1))}>縮小</button><button onClick={() => fitZoom()}>全体を表示 <kbd>⌘0</kbd></button><button onClick={() => setZoom(100)}>100%（実寸） <kbd>⌘1</kbd></button></div></details>
           <details><summary>ヘルプ</summary><div className="menu-pop"><a href="/guide.pdf" target="_blank" rel="noopener noreferrer">図解取扱説明書・料金表 ↗</a></div></details>
         </nav>
         <div className="top-project"><span className="project-dot" /> <input aria-label="プロジェクト名" maxLength={150} value={project.name} onChange={e => updateProject(p => ({ ...p, name: e.target.value }))} /><span className="subdued">{saved ? '保存済み' : '未保存'}</span></div>
@@ -789,9 +849,11 @@ export default function App() {
             <div className="canvas-toolbar-left"><span className="breadcrumb">STUDIO <span>/</span> {project.name || 'Untitled'}</span><span className="canvas-size">{project.width} × {project.height} px</span></div>
             <div className="canvas-toolbar-right">
               {(tool === 'brush' || tool === 'erase' || tool === 'sketch') && <div className="brush-control"><Brush size={15} /><input aria-label="ブラシサイズ" type="range" min="4" max="180" value={brushSize} onChange={e => setBrushSize(Number(e.target.value))} /><span>{brushSize}px</span></div>}
-              <button className="small-icon" aria-label="縮小" onClick={() => setZoom(z => Math.max(20, z - 10))}><ZoomOut size={17} /></button>
-              <span className="zoom-label">{zoom}%</span>
-              <button className="small-icon" aria-label="拡大" onClick={() => setZoom(z => Math.min(160, z + 10))}><ZoomIn size={17} /></button>
+              <button className="small-icon" aria-label="縮小" onClick={() => setZoom(z => stepZoom(z, -1))}><ZoomOut size={17} /></button>
+              <span className="zoom-label" aria-label="表示倍率">{Math.round(zoom)}%</span>
+              <button className="small-icon" aria-label="拡大" onClick={() => setZoom(z => stepZoom(z, 1))}><ZoomIn size={17} /></button>
+              <button className="small-icon" title="全体を表示（⌘0）" aria-label="全体を表示" onClick={() => fitZoom()}><Scan size={16} /></button>
+              <button className="text-btn zoom-actual" title="実寸で表示（⌘1）" aria-label="実寸で表示" onClick={() => setZoom(100)}>1:1</button>
             </div>
           </div>
           <div ref={viewportRef} className="canvas-viewport" onPointerDown={beginPan} onPointerMove={movePan} onPointerUp={() => { panRef.current = null; }} onPointerCancel={() => { panRef.current = null; }}>
