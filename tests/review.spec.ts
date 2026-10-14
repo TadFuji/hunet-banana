@@ -273,6 +273,54 @@ test('moving a layer off the canvas and back keeps the pixels that were outside'
   await expect.poll(()=>pixel(page,4,32)).toEqual([255,0,0,255]);
 });
 
+test('expansion never clips moved pixels, including hidden layers, and safely round trips',async({page})=>{
+  await page.goto('/');const original=await importFixture(page);
+  const moved={...original,layers:[{...original.layers[0],x:-32}]};
+  const load=async(project:typeof moved)=>page.locator('input[accept=".json,application/json"]').setInputFiles({name:'moved.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(project))});
+  await load(moved);await expect.poll(()=>pixel(page,48,32)).toEqual([0,0,0,0]);
+  for(const size of ['64 × 64','80 × 80']){
+    page.once('dialog',dialog=>dialog.accept(size));
+    await page.getByRole('button',{name:'キャンバスを拡張',exact:true}).click();
+    await expect(page.getByRole('alert')).toContainText('画面外のレイヤー');
+    expect(await page.getByLabel('編集中の画像',{exact:true}).evaluate((c:HTMLCanvasElement)=>c.width)).toBe(64);
+    await page.getByRole('button',{name:'エラーを閉じる',exact:true}).click();
+    await expect(page.getByRole('alert')).toHaveCount(0);
+  }
+  const hidden={...moved,layers:[original.layers[0],{...original.layers[0],id:'hidden',visible:false,x:-32}]};
+  await load(hidden);
+  page.once('dialog',dialog=>dialog.accept('80 × 80'));
+  await page.getByRole('button',{name:'キャンバスを拡張',exact:true}).click();
+  await expect(page.getByRole('alert')).toContainText('画面外のレイヤー');
+  await load(moved);
+  page.once('dialog',dialog=>dialog.accept('128 × 128'));
+  await page.getByRole('button',{name:'キャンバスを拡張',exact:true}).click();
+  await expect.poll(()=>pixel(page,0,32)).toEqual([0,0,255,255]);
+  await expect.poll(()=>pixel(page,63,95)).toEqual([0,0,255,255]);
+  const download=page.waitForEvent('download');await page.getByRole('button',{name:'プロジェクトを書き出す',exact:true}).click();
+  const saved=await (await download).path();
+  await importFixture(page);
+  await page.locator('input[accept=".json,application/json"]').setInputFiles(saved);
+  await expect.poll(()=>page.getByLabel('編集中の画像',{exact:true}).evaluate((c:HTMLCanvasElement)=>c.width)).toBe(128);
+  await expect.poll(()=>pixel(page,0,32)).toEqual([0,0,255,255]);
+  expect(await pixel(page,63,95)).toEqual([0,0,255,255]);
+});
+
+test('moving an imported offset larger than the document remains incremental',async({page})=>{
+  await page.goto('/');const original=await importFixture(page);
+  const moved={...original,layers:[{...original.layers[0],x:100,y:-100}]};
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({name:'offset.json',mimeType:'application/json',buffer:Buffer.from(JSON.stringify(moved))});
+  await page.getByRole('button',{name:'移動',exact:true}).click();
+  const box=(await page.getByLabel('編集キャンバス',{exact:true}).boundingBox())!;
+  await page.mouse.move(box.x+box.width/2,box.y+box.height/2);await page.mouse.down();await page.waitForTimeout(100);
+  await page.mouse.move(box.x+box.width/2+box.width/64,box.y+box.height/2+box.height/64);await page.mouse.up();
+  await expect(page.getByText('レイヤーを移動しました',{exact:true})).toBeVisible();
+  const download=page.waitForEvent('download');await page.getByRole('button',{name:'プロジェクトを書き出す',exact:true}).click();
+  const {readFile}=await import('node:fs/promises');
+  const saved=JSON.parse(await readFile((await (await download).path())!,'utf8'));
+  expect(saved.layers[0].x).toBe(101);expect(saved.layers[0].y).toBe(-99);
+  expect(saved.layers[0].dataUrl).toBe(original.layers[0].dataUrl);
+});
+
 test('a large adopted image fits the visible canvas area and zoom never changes its pixels',async({page,context})=>{
   await page.goto('/');await importFixture(page);const big=await image(page,'green',4096,2304);
   await context.route('https://generativelanguage.googleapis.com/**',route=>route.fulfill({contentType:'application/json',body:JSON.stringify({candidates:[{content:{parts:[{inlineData:{mimeType:'image/png',data:big.split(',')[1]}}]}}]})}));

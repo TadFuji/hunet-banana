@@ -4,6 +4,7 @@ const IMAGE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 const MIME = new Set(['image/png','image/jpeg','image/webp','application/pdf','video/mp4','video/webm','video/quicktime']);
 const MAX_PIXELS = 32_000_000;
 export const MAX_PROJECT_PIXELS = 128_000_000;
+export const MAX_LAYER_OFFSET = 16384;
 export function uid():string { return crypto.randomUUID(); }
 export function loadImage(dataUrl:string):Promise<HTMLImageElement> {
   if (!IMAGE.test(dataUrl)) return Promise.reject(new Error('PNG・JPEG・WebP画像を選んでください'));
@@ -53,7 +54,7 @@ export function importProject(text:string):Project {
     const layer:Layer={id:l.id,name:l.name,dataUrl:l.dataUrl,visible:l.visible,opacity:l.opacity};if(l.x)layer.x=l.x as number;if(l.y)layer.y=l.y as number;return layer;});
   return {version:1,name:p.name,width:p.width,height:p.height,layers};
 }
-const validOffset=(value:unknown)=>value===undefined||Number.isInteger(value)&&Math.abs(value as number)<=16384;
+const validOffset=(value:unknown)=>value===undefined||Number.isInteger(value)&&Math.abs(value as number)<=MAX_LAYER_OFFSET;
 export function exportProject(project:Project):Blob {return new Blob([JSON.stringify(importProject(JSON.stringify(project)))],{type:'application/json'});}
 /** Validate every embedded image before replacing the current document. */
 export async function validateProjectImages(project:Project):Promise<void> {

@@ -10,7 +10,7 @@ import {
 import { geminiClient } from './api/client';
 import {
   applyMask, canvasToMedia, downloadBlob, exportProject, fileToMedia, importProject,
-  loadImage, MAX_PROJECT_PIXELS, renderProject, restoreProject, saveProject, uid, validateProjectImages,
+  loadImage, MAX_LAYER_OFFSET, MAX_PROJECT_PIXELS, renderProject, restoreProject, saveProject, uid, validateProjectImages,
 } from './lib/editor';
 import { DEFAULT_SETTINGS, MODEL, RATIOS } from './types';
 import type { BatchJob, ConversationTurn, GenerateResult, GenerationSettings, Layer, MediaInput, Project } from './types';
@@ -462,10 +462,9 @@ export default function App() {
       if (!movement.dx && !movement.dy) return;
       if (!documentUnchanged(movement.revision)) return;
       // Store an offset instead of redrawing the bitmap, so pixels moved outside the canvas are kept.
-      const { width, height } = movement.project;
       const clamp = (value: number, limit: number) => Math.max(-limit, Math.min(limit, value));
       const next = { ...movement.project, layers: movement.project.layers.map(item => item.id === movement.id
-        ? { ...item, x: clamp((item.x ?? 0) + movement.dx, width), y: clamp((item.y ?? 0) + movement.dy, height) } : item) };
+        ? { ...item, x: clamp((item.x ?? 0) + movement.dx, MAX_LAYER_OFFSET), y: clamp((item.y ?? 0) + movement.dy, MAX_LAYER_OFFSET) } : item) };
       if (commit(next, movement.mask, movement.sketch)) setStatus('レイヤーを移動しました');
       return;
     }
@@ -719,13 +718,18 @@ export default function App() {
     const left = Math.floor((width - original.width) / 2); const top = Math.floor((height - original.height) / 2);
     Promise.all(original.layers.map(async layer => {
       const image = await imageFromData(layer.dataUrl);
+      const x = left + (layer.x ?? 0); const y = top + (layer.y ?? 0);
+      // Expansion must not bake away pixels kept outside the document by a previous move.
+      if (x < 0 || y < 0 || x + original.width > width || y + original.height > height) {
+        throw new Error('画面外のレイヤーを保持できるよう、拡張サイズを大きくするか、レイヤーを内側へ戻してください');
+      }
       const canvas = document.createElement('canvas'); canvas.width = width; canvas.height = height;
-      canvas.getContext('2d')!.drawImage(image, left + (layer.x ?? 0), top + (layer.y ?? 0), original.width, original.height);
+      canvas.getContext('2d')!.drawImage(image, x, y, original.width, original.height);
       return { ...layer, dataUrl: canvas.toDataURL('image/png'), x: undefined, y: undefined };
     })).then(layers => {
       if (documentUnchanged(snapshot.revision) && commit({ ...original, width, height, layers }, '', '')) setStatus('キャンバスを拡張しました');
     })
-      .catch(() => setError('キャンバスを拡張できませんでした'));
+      .catch(caught => setError(caught instanceof Error ? caught.message : 'キャンバスを拡張できませんでした'));
   };
   const startBatch = async () => {
     if (busy || batchCreatingRef.current) return;
