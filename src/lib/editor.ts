@@ -1,9 +1,10 @@
-import type { MediaInput, Project } from '../types';
+import type { Layer, MediaInput, Project } from '../types';
 
 const IMAGE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 const MIME = new Set(['image/png','image/jpeg','image/webp','application/pdf','video/mp4','video/webm','video/quicktime']);
 const MAX_PIXELS = 32_000_000;
 export const MAX_PROJECT_PIXELS = 128_000_000;
+export const MAX_LAYER_OFFSET = 16384;
 export function uid():string { return crypto.randomUUID(); }
 export function loadImage(dataUrl:string):Promise<HTMLImageElement> {
   if (!IMAGE.test(dataUrl)) return Promise.reject(new Error('PNG・JPEG・WebP画像を選んでください'));
@@ -13,7 +14,7 @@ export function createBlank(width:number,height:number):string {const c=document
 export async function renderProject(project:Project):Promise<HTMLCanvasElement> {
   const canvas=document.createElement('canvas');canvas.width=project.width;canvas.height=project.height;
   const ctx=canvas.getContext('2d')!;
-  for(const layer of project.layers) if(layer.visible){ctx.globalAlpha=layer.opacity;ctx.drawImage(await loadImage(layer.dataUrl),0,0,canvas.width,canvas.height);}
+  for(const layer of project.layers) if(layer.visible){ctx.globalAlpha=layer.opacity;ctx.drawImage(await loadImage(layer.dataUrl),layer.x??0,layer.y??0,canvas.width,canvas.height);}
   ctx.globalAlpha=1;return canvas;
 }
 export function canvasToMedia(canvas:HTMLCanvasElement,label?:string):MediaInput {return {mimeType:'image/png',data:canvas.toDataURL('image/png').split(',')[1],label};}
@@ -49,9 +50,11 @@ export function importProject(text:string):Project {
   const p=JSON.parse(text);
   if(!p || p.version!==1 || typeof p.name!=='string' || p.name.length>150 || !Number.isInteger(p.width)||!Number.isInteger(p.height)||p.width<1||p.height<1||p.width>16384||p.height>16384||p.width*p.height>MAX_PIXELS||!Array.isArray(p.layers)||p.layers.length>40||p.width*p.height*p.layers.length>MAX_PROJECT_PIXELS)throw new Error('プロジェクトの形式またはサイズが不正です');
   const ids=new Set<string>();
-  const layers=p.layers.map((l:Record<string,unknown>)=>{if(typeof l.id!=='string'||l.id.length>100||ids.has(l.id)||typeof l.name!=='string'||l.name.length>150||typeof l.dataUrl!=='string'||!IMAGE.test(l.dataUrl)||typeof l.visible!=='boolean'||typeof l.opacity!=='number'||!Number.isFinite(l.opacity)||l.opacity<0||l.opacity>1)throw new Error('レイヤーの形式が不正です');ids.add(l.id);return {id:l.id,name:l.name,dataUrl:l.dataUrl,visible:l.visible,opacity:l.opacity};});
+  const layers=p.layers.map((l:Record<string,unknown>)=>{if(typeof l.id!=='string'||l.id.length>100||ids.has(l.id)||typeof l.name!=='string'||l.name.length>150||typeof l.dataUrl!=='string'||!IMAGE.test(l.dataUrl)||typeof l.visible!=='boolean'||typeof l.opacity!=='number'||!Number.isFinite(l.opacity)||l.opacity<0||l.opacity>1||!validOffset(l.x)||!validOffset(l.y))throw new Error('レイヤーの形式が不正です');ids.add(l.id);
+    const layer:Layer={id:l.id,name:l.name,dataUrl:l.dataUrl,visible:l.visible,opacity:l.opacity};if(l.x)layer.x=l.x as number;if(l.y)layer.y=l.y as number;return layer;});
   return {version:1,name:p.name,width:p.width,height:p.height,layers};
 }
+const validOffset=(value:unknown)=>value===undefined||Number.isInteger(value)&&Math.abs(value as number)<=MAX_LAYER_OFFSET;
 export function exportProject(project:Project):Blob {return new Blob([JSON.stringify(importProject(JSON.stringify(project)))],{type:'application/json'});}
 /** Validate every embedded image before replacing the current document. */
 export async function validateProjectImages(project:Project):Promise<void> {
