@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { validateProjectImages } from './editor';
+import { importProject, validateProjectImages } from './editor';
 import type { Project } from '../types';
 
 afterEach(()=>vi.unstubAllGlobals());
@@ -24,5 +24,17 @@ describe('atomic project image validation',()=>{
     decoder(4000,4000);
     await expect(validateProjectImages(fixture(8))).resolves.toBeUndefined();
     await expect(validateProjectImages(fixture(9))).rejects.toThrow('1億2800万');
+  });
+});
+describe('layer offsets',()=>{
+  const project=(extra:Record<string,unknown>)=>JSON.stringify({version:1,name:'p',width:64,height:64,layers:[{id:'a',name:'a',dataUrl:'data:image/png;base64,YQ==',visible:true,opacity:1,...extra}]});
+  it('keeps integer offsets so moved pixels outside the canvas survive saving',()=>{
+    expect(importProject(project({x:-40,y:12})).layers[0]).toMatchObject({x:-40,y:12});
+    expect(importProject(project({})).layers[0]).not.toHaveProperty('x');
+  });
+  it('rejects non-integer or oversized offsets',()=>{
+    expect(()=>importProject(project({x:1.5}))).toThrow('レイヤーの形式');
+    expect(()=>importProject(project({y:20000}))).toThrow('レイヤーの形式');
+    expect(()=>importProject(project({x:'5'}))).toThrow('レイヤーの形式');
   });
 });
