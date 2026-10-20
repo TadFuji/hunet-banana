@@ -135,3 +135,16 @@ PLAYWRIGHT_BASE_URL=https://hunet-banana-studio.vercel.app npm run test:e2e
 | assets/index-CU3KTy8-.css | 24362 | `43a80668abcf0a252197a677f3156b9d167e9c50ad6f629b6d7650237fbcb579` |
 | assets/index-YrsBj63-.js | 260252 | `9ae6534f5c85e7781e189a7c1d0cf656439181ca6cf683d3316fce075d684f01` |
 | assets/security.worker-iewXD48_.js | 9609 | `4749b5770d37faf60260e0c4f6392f61ca334e702c62b309bb8216657be4c511` |
+
+## メニュー開閉の修正を公開（2026-10-20）
+
+- 公開ソース: `a543d58c02fed17d22538bbb8938cc9a039654b2`（PR #10、`main` へSquash統合）。
+- 本番デプロイ: `dpl_DMNwaimz4hGAkvQQNSKuTYUdoueU`、production / READY、Vercel CLI 64.2.0 で `dist` を配信。`hunet-banana-studio.vercel.app`・`hunet-banana.vercel.app` に割り当て済み。VercelプロジェクトはGitHubと自動連携していないため、統合後に手動で配信した。
+- 上部メニューが外側のクリック・項目選択・別メニューを開く操作（キーボード含む）・Escで閉じるよう修正。
+- 公開URLの `index.html`・`assets/index-Bh6XR9U9.js`・Worker・説明書PDFがローカルビルドとSHA-1で一致。文書とWorkerのCSPヘッダーを確認。公開URLに対するE2E 49件が成功（5.0分）。公開版でファイルメニューを開き、外側のクリックで閉じることを目視で確認。
+- 検証の生成通信はダミーキーとモック。実キーの使用や有料生成は行っていない。
+
+| 変更したファイル | バイト数 | SHA-256 |
+|---|---:|---|
+| index.html | 638 | `23ae8d7bf5453813ee4721eef0c8eaae3be654ea3237345a49541eed08132705` |
+| assets/index-Bh6XR9U9.js | 292907 | `a9a3d287ed01b8d29ef986bc0b0176e92847219e24b12619e21d569f74bdb4c5` |
