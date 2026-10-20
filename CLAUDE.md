@@ -41,7 +41,11 @@ npm run test:e2e               # Playwright。先に npm run build が必要
 
 ## GitHub の運用
 
-`main` はブランチ保護されており、変更は Pull Request（Squash 統合）で入れる。必須チェックは Node 22/24 の check、Chromium の E2E、全履歴の秘密情報スキャン、CodeQL。詳細は `docs/development.md` の「GitHubでの保守」。Dependabot の PR は自動統合しない。
+`main` はブランチ保護されており、変更は Pull Request（Squash 統合）で入れる。必須チェックは Node 22/24 の check、Chromium の E2E、全履歴の秘密情報スキャン、CodeQL。詳細は `docs/development.md` の「GitHubでの保守」。Dependabot の PR は自動統合しない。未解決のレビュー会話（自動レビューのコメントを含む）が残っていると統合できない。GitHub の自動統合（auto-merge）はリポジトリ設定で無効。
+
+## 公開（Vercel）
+
+Vercel プロジェクト `hunet-banana`（チーム `tadfujis-projects`）は GitHub と自動連携していない。`main` に統合しても公開版は変わらない。統合後に `npm run build` した `dist` の中身を、Vercel CLI でそのまま本番配信する（`dist/vercel.json` が配信ヘッダーを含む）。リポジトリ外の作業用フォルダーに `dist` をコピーし、`.vercel/project.json` にプロジェクトIDとチームIDを置いて `vercel deploy --prod --yes` を実行する。配信後の確認手順と過去の記録は `docs/deployment.md`。
 
 ## 文書の更新先
 
