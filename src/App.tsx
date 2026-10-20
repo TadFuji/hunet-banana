@@ -138,6 +138,7 @@ export default function App() {
   const sketchRef = useRef<HTMLCanvasElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const menuBarRef = useRef<HTMLElement>(null);
   const layerFileRef = useRef<HTMLInputElement>(null);
   const projectFileRef = useRef<HTMLInputElement>(null);
   const referenceFileRef = useRef<HTMLInputElement>(null);
@@ -211,6 +212,16 @@ export default function App() {
     if (pixelsChanged) conversationRef.current = [];
     setProject(next); setMask(nextMask); setSketch(nextSketch); setSaved(false); setHistoryTick(v => v + 1);
     return true;
+  }, []);
+
+  useEffect(() => {
+    // Like a Mac menu bar: a click anywhere outside an open menu, or Escape, closes it.
+    const openMenus = () => [...(menuBarRef.current?.querySelectorAll('details[open]') ?? [])];
+    const onPointerDown = (event: PointerEvent) => { for (const menu of openMenus()) if (!menu.contains(event.target as Node)) menu.removeAttribute('open'); };
+    const onKeyDown = (event: KeyboardEvent) => { if (event.key === 'Escape') openMenus().forEach(menu => menu.removeAttribute('open')); };
+    document.addEventListener('pointerdown', onPointerDown, true);
+    document.addEventListener('keydown', onKeyDown);
+    return () => { document.removeEventListener('pointerdown', onPointerDown, true); document.removeEventListener('keydown', onKeyDown); };
   }, []);
 
   useEffect(() => {
@@ -813,7 +824,7 @@ export default function App() {
       <input ref={referenceFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp,application/pdf,video/mp4,video/webm,video/quicktime" multiple onChange={e => { void addReferences(e.target.files); e.target.value = ''; }} />
       <header className="topbar">
         <div className="brand"><div className="brand-mark"><Aperture size={22} strokeWidth={1.9} /></div><div><strong>banana<span>studio</span></strong><small>NANO BANANA 2.1 WORKSPACE</small></div></div>
-        <nav className="menu-bar" aria-label="メニューバー">
+        <nav ref={menuBarRef} className="menu-bar" aria-label="メニューバー" onClick={e => { const item = (e.target as Element).closest('.menu-pop button, .menu-pop a'); item?.closest('details')?.removeAttribute('open'); }}>
           <details><summary>ファイル</summary><div className="menu-pop"><button onClick={newDocument}>新規文書</button><button onClick={() => fileRef.current?.click()}>画像を開く</button><button onClick={() => projectFileRef.current?.click()}>プロジェクトを開く</button><button onClick={() => void save()}>保存 <kbd>⌘S</kbd></button><button onClick={() => void exportPng()}>PNGを書き出す</button><button onClick={exportJson}>プロジェクトを書き出す</button></div></details>
           <details><summary>編集</summary><div className="menu-pop"><button onClick={() => historyStep(-1)}>元に戻す <kbd>⌘Z</kbd></button><button onClick={() => historyStep(1)}>やり直し <kbd>⇧⌘Z</kbd></button></div></details>
           <details><summary>画像</summary><div className="menu-pop"><button onClick={expandCanvas}>キャンバスを拡張</button></div></details>
