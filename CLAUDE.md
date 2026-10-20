@@ -45,7 +45,7 @@ npm run test:e2e               # Playwright。先に npm run build が必要
 
 ## 公開（Vercel）
 
-Vercel プロジェクト `hunet-banana`（チーム `tadfujis-projects`）は GitHub と自動連携していない。`main` に統合しても公開版は変わらない。統合後に `npm run build` した `dist` の中身を、Vercel CLI でそのまま本番配信する（`dist/vercel.json` が配信ヘッダーを含む）。リポジトリ外の作業用フォルダーに `dist` をコピーし、`.vercel/project.json` にプロジェクトIDとチームIDを置いて `vercel deploy --prod --yes` を実行する。配信後の確認手順と過去の記録は `docs/deployment.md`。
+Vercel プロジェクト `hunet-banana`（チーム `tadfujis-projects`）は GitHub と自動連携していない。`main` に統合しても公開版は変わらない。統合後に `npm run build` した `dist` の中身を、Vercel CLI でそのまま本番配信する（`dist/vercel.json` が配信ヘッダーを含む）。リポジトリ外の作業用フォルダーに `dist` をコピーし、`.vercel/project.json` に `{"projectId":"prj_yM9rdiqB36g5oF8ywAUFVayd2DG3","orgId":"team_WAAbwc67azA5nSnKk2XCVrSC"}` を置いて `vercel deploy --prod --yes` を実行する（どちらも識別子で、秘密情報ではない。認証は実行者の Vercel CLI のログインを使う）。配信後の確認手順と過去の記録は `docs/deployment.md`。
 
 ## 文書の更新先
 
