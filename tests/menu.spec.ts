@@ -32,3 +32,13 @@ test('opening another menu closes the previous one, and Escape closes the open m
   await page.keyboard.press('Escape');
   await expect(menu(page, '編集')).not.toHaveAttribute('open', '');
 });
+
+test('opening a menu with the keyboard closes the previous one', async ({ page }) => {
+  await summary(page, 'ファイル').focus();
+  await page.keyboard.press('Enter');
+  await expect(menu(page, 'ファイル')).toHaveAttribute('open', '');
+  await summary(page, '編集').focus();
+  await page.keyboard.press('Enter');
+  await expect(menu(page, '編集')).toHaveAttribute('open', '');
+  await expect(menu(page, 'ファイル')).not.toHaveAttribute('open', '');
+});
