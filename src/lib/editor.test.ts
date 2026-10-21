@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { importProject, validateProjectImages } from './editor';
+import { canvasToMedia, importProject, validateProjectImages } from './editor';
 import { encodePsdBinary, decodePsdBinary } from './psd';
 import type { Project } from '../types';
 
@@ -96,5 +96,28 @@ describe('PSD binary encode and decode',()=>{
 
     view.setUint32(18,16385);
     expect(()=>decodePsdBinary(buf)).toThrow('16,384');
+  });
+});
+describe('canvasToMedia payload size guard',()=>{
+  it('downscales canvases above 2048px and falls back to lossy compression when PNG exceeds 3M base64 chars',()=>{
+    const created:{width:number;height:number}[]=[];
+    vi.stubGlobal('document',{
+      createElement:()=>({
+        width:0,
+        height:0,
+        getContext:()=>({drawImage:(_src:unknown,_x:number,_y:number,w:number,h:number)=>{created.push({width:w,height:h});}}),
+        toDataURL:(mime?:string)=>mime==='image/webp'?`data:image/webp;base64,${'B'.repeat(500_000)}`:`data:image/png;base64,${'A'.repeat(3_500_000)}`,
+      }),
+    });
+    const fakeCanvas={
+      width:4096,
+      height:3072,
+      toDataURL:()=>`data:image/png;base64,${'A'.repeat(18_000_000)}`,
+    } as unknown as HTMLCanvasElement;
+    const result=canvasToMedia(fakeCanvas,'編集元画像');
+    expect(created).toEqual([{width:2048,height:1536}]);
+    expect(result.mimeType).toBe('image/webp');
+    expect(result.data.length).toBe(500_000);
+    expect(result.label).toBe('編集元画像');
   });
 });

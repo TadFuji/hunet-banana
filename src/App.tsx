@@ -643,9 +643,10 @@ export default function App() {
     if (selected.length + references.length > MAX_REFERENCES) { setError(`参照素材は最大${MAX_REFERENCES}件です`); return; }
     const valid = selected.filter(file => ['image/png', 'image/jpeg', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm', 'video/quicktime'].includes(file.type));
     if (valid.length !== selected.length) { setError('画像・PDF・動画を選んでください'); return; }
-    const inlineBytes = references.reduce((sum, item) => sum + (item.fileUri ? 0 : Math.ceil(item.data.length * .75)), 0);
-    const totalBytes = selected.reduce((sum, f) => sum + f.size, 0) + inlineBytes;
-    const needsFilesApi = selected.some(f => f.size > MAX_INLINE_FILE_BYTES) || totalBytes > MAX_UPLOAD_BYTES;
+    const inlineBase64 = references.reduce((sum, item) => sum + (item.fileUri ? 0 : item.data.length), 0);
+    const selectedBase64 = selected.reduce((sum, f) => sum + Math.ceil(f.size * 4 / 3), 0);
+    const totalBytes = selected.reduce((sum, f) => sum + f.size, 0) + Math.ceil(inlineBase64 * .75);
+    const needsFilesApi = selected.some(f => f.size > MAX_INLINE_FILE_BYTES || (keyConnected && Math.ceil(f.size * 4 / 3) > 8_000_000)) || totalBytes > MAX_UPLOAD_BYTES || (keyConnected && inlineBase64 + selectedBase64 > 12_000_000);
     if (needsFilesApi) {
       if (keyConnected) { await uploadReferencesWithFilesApi(selected); return; }
       setError(totalBytes > MAX_UPLOAD_BYTES ? '添付ファイルは合計20MB未満にしてください（APIキー接続時はFiles APIで200MBまで対応）' : '各ファイルは14MB以内にしてください（APIキー接続時はFiles APIで200MBまで対応）');
@@ -679,7 +680,7 @@ export default function App() {
     geminiClient.clearKey(); setKeyConnected(false); setStatus('APIキーを破棄しました'); setKeyOpen(false);
   };
 
-  const prepareGenerationPayload = async (targetMode: Mode, originalProject: Project, maskSnapshot: string, sketchSnapshot: string) => {
+  const prepareGenerationPayload = async (targetMode: Mode, originalProject: Project, maskSnapshot: string, sketchSnapshot: string, keySession: number) => {
     const media: MediaInput[] = [];
     let original = '';
     let geometry = { ratio: settings.ratio, width: originalProject.width, height: originalProject.height, x: 0, y: 0 };
@@ -707,7 +708,41 @@ export default function App() {
     }
     const room = MAX_REFERENCES - media.filter(item => item.mimeType.startsWith('image/')).length;
     if (references.filter(item => item.mimeType.startsWith('image/')).length > room) throw new Error(`画像入力は合計${MAX_REFERENCES}枚以内にしてください`);
-    media.push(...references);
+    if (geminiClient.session() !== keySession) throw new Error('APIキーの接続が変更されたため生成を中止しました');
+    const resolvedRefs = [...references];
+    const canvasBase64 = media.reduce((sum, item) => sum + (item.fileUri ? 0 : item.data.length), 0);
+    let totalInlineBase64 = canvasBase64 + resolvedRefs.reduce((sum, item) => sum + (item.fileUri ? 0 : item.data.length), 0);
+    if (totalInlineBase64 > 12_000_000 && keyConnected) {
+      const newlyUploaded: string[] = [];
+      const promotedMap = new Map<MediaInput, MediaInput>();
+      const order = resolvedRefs.map((_, idx) => idx).sort((a, b) => resolvedRefs[b].data.length - resolvedRefs[a].data.length);
+      try {
+        for (const i of order) {
+          if (totalInlineBase64 <= 12_000_000) break;
+          const ref = resolvedRefs[i];
+          if (ref.fileUri || !ref.data || ref.data.length < 1_000_000) continue;
+          const bin = atob(ref.data);
+          const u8 = new Uint8Array(bin.length);
+          for (let j = 0; j < bin.length; j++) u8[j] = bin.charCodeAt(j);
+          let uploaded = await geminiClient.uploadFile({ mimeType: ref.mimeType, bytes: u8.buffer, label: ref.label }, keySession);
+          newlyUploaded.push(uploaded.name);
+          for (let attempt = 0; uploaded.state === 'PROCESSING' && attempt < 3; attempt++) {
+            await new Promise(resolve => setTimeout(resolve, 250));
+            uploaded = await geminiClient.getFile(uploaded.name, keySession);
+          }
+          totalInlineBase64 -= ref.data.length;
+          const nextRef: MediaInput = { mimeType: uploaded.mimeType, data: '', label: ref.label, fileUri: uploaded.uri, fileName: uploaded.name, fileState: uploaded.state };
+          resolvedRefs[i] = nextRef;
+          promotedMap.set(ref, nextRef);
+        }
+        if (geminiClient.session() !== keySession) throw new Error('APIキーの接続が変更されたため生成を中止しました');
+        if (promotedMap.size) setReferences(prev => prev.map(entry => promotedMap.get(entry) ?? entry));
+      } catch (caught) {
+        for (const name of newlyUploaded) void geminiClient.deleteFile(name, keySession).catch(() => {});
+        throw caught;
+      }
+    }
+    media.push(...resolvedRefs);
     const requestSettings = targetMode === 'mask' ? { ...settings, ratio: geometry.ratio } : settings;
     return { media, original, geometry, requestSettings };
   };
@@ -748,7 +783,7 @@ export default function App() {
     const sketchSnapshot = canvasData(sketchRef.current);
     setBusy(true); setError(''); setStatus('Nano Banana 2.1 に送信しています…');
     try {
-      const { media, original, geometry, requestSettings } = await prepareGenerationPayload(mode, originalProject, maskSnapshot, sketchSnapshot);
+      const { media, original, geometry, requestSettings } = await prepareGenerationPayload(mode, originalProject, maskSnapshot, sketchSnapshot, keySession);
       const instruction = buildModeInstruction(prompt, mode);
       const result = await geminiClient.generate({ prompt: instruction, media, settings: requestSettings,
         history: mode === 'create' ? [] : conversationRef.current }, keySession);
@@ -869,7 +904,7 @@ export default function App() {
     setBatchJob(null); setBatchId('');
     setBusy(true); setError('');
     try {
-      const { media, original, geometry, requestSettings } = await prepareGenerationPayload(activeMode, originalProject, maskSnapshot, sketchSnapshot);
+      const { media, original, geometry, requestSettings } = await prepareGenerationPayload(activeMode, originalProject, maskSnapshot, sketchSnapshot, keySession);
       batchContextRef.current = activeMode === 'create' ? null : {
         mode: activeMode, original, mask: maskSnapshot, revision,
         width: originalProject.width, height: originalProject.height,

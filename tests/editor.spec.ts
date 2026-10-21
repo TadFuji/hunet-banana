@@ -172,6 +172,7 @@ test('Google Files API uploads media, refreshes state, sends fileData, and delet
   await expect(page.getByRole('dialog', { name: '生成結果の確認' })).toBeVisible();
   const genCall = calls.find(c => c.url.includes(':generateContent'));
   expect(genCall).toBeTruthy();
+  expect(genCall!.url).toContain('/v1beta/models/');
   expect(JSON.parse(genCall!.body!).contents[0].parts[1]).toEqual({ fileData: { mimeType: 'video/mp4', fileUri: 'https://generativelanguage.googleapis.com/v1beta/files/clip123' } });
   await page.getByRole('button', { name: '破棄' }).click();
   await page.getByRole('button', { name: '参照1を削除', exact: true }).click();

@@ -148,3 +148,18 @@ PLAYWRIGHT_BASE_URL=https://hunet-banana-studio.vercel.app npm run test:e2e
 |---|---:|---|
 | index.html | 638 | `23ae8d7bf5453813ee4721eef0c8eaae3be654ea3237345a49541eed08132705` |
 | assets/index-Bh6XR9U9.js | 292907 | `a9a3d287ed01b8d29ef986bc0b0176e92847219e24b12619e21d569f74bdb4c5` |
+
+## PSD読み書き・描画モード・Files API・Batch拡張を公開（2026-10-21）
+
+- 公開ソース: `1b9b7bd7103b98d8ec91a7405bf543a8b5a87acd`（PR #14、GitHubの必須7チェック通過後に `main` へSquash統合）。
+- 本番デプロイ: `6pr4LpnkvgB8gyFfV4jutPmGBWLK`、production / READY、Vercel CLI 65.0.0 で `dist` を配信。`https://hunet-banana-studio.vercel.app/` および `https://hunet-banana.vercel.app/` に反映済み。
+- PSD（`.psd`）バイナリの読み込み・書き出し（RGB 8bit、Raw・PackBits RLE展開、Unicodeレイヤー名 `luni`、ユーザーレイヤーマスク `-2`/`-3` のアルファ合成、文書外へまたがるレイヤーの可視領域保持）、12種類のレイヤー描画モード、Google Files API（最大200MBアップロード・状態更新・削除・`fileData` 参照・途中失敗時の自動削除・キー切断時の参照クリア）、およびBatch生成でのキャンバス編集・参照素材・Web/画像検索・未選択画素保持採用を公開。
+- 公開URLの `index.html`・JS・CSS・Worker・説明書PDFがローカルビルドとSHA-256で完全一致。公開URLに対する `publication.spec.ts`（文書とWorkerのCSPヘッダー完全一致、HEAD・クエリ付きURL、PDF配信、第三者スクリプト不在）2件および新規機能E2E 3件がすべて成功。
+- 検証の生成通信はダミーキーとモック。実キーの使用や有料生成は行っていない。
+
+| 変更したファイル | バイト数 | SHA-256 |
+|---|---:|---|
+| index.html | 638 | `9f5876064a5c34239a8df690f721891130c6f57264f454c3940dfa109eab0b04` |
+| assets/index-B_ORFtN8.js | 312779 | `68e5108e6cd93f7edc5dc2c9ba590038ee3b3711131d5891b1e2b00db532d829` |
+| assets/index-CcYx-zwN.css | 25025 | `139966208c49a2735f38cc0c5b16c4d853ff91194e4f701e84d048f39a17f4c9` |
+| assets/security.worker-CoFDStqU.js | 11800 | `abd79050f45aeddd5d61d0d1dbe371ccddb2611923290aa88009986ce6a95d09` |

@@ -22,7 +22,32 @@ export async function renderProject(project:Project):Promise<HTMLCanvasElement> 
   for(const layer of project.layers) if(layer.visible){ctx.globalAlpha=layer.opacity;ctx.globalCompositeOperation=canvasBlendOperation(layer.blendMode);ctx.drawImage(await loadImage(layer.dataUrl),layer.x??0,layer.y??0,canvas.width,canvas.height);}
   ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';return canvas;
 }
-export function canvasToMedia(canvas:HTMLCanvasElement,label?:string):MediaInput {return {mimeType:'image/png',data:canvas.toDataURL('image/png').split(',')[1],label};}
+export function canvasToMedia(canvas:HTMLCanvasElement,label?:string):MediaInput {
+  let target=canvas;
+  const maxSide=2048;
+  if(canvas.width>maxSide||canvas.height>maxSide){
+    const scale=maxSide/Math.max(canvas.width,canvas.height);
+    const scaled=document.createElement('canvas');
+    scaled.width=Math.max(1,Math.round(canvas.width*scale));
+    scaled.height=Math.max(1,Math.round(canvas.height*scale));
+    scaled.getContext('2d')!.drawImage(canvas,0,0,scaled.width,scaled.height);
+    target=scaled;
+  }
+  const png=target.toDataURL('image/png').split(',')[1];
+  if(png.length<=3_000_000)return {mimeType:'image/png',data:png,label};
+  let best:{mimeType:string;data:string}={mimeType:'image/png',data:png};
+  for(const mime of ['image/webp','image/jpeg'] as const){
+    const encoded=target.toDataURL(mime,0.92);
+    if(encoded.startsWith(`data:${mime};base64,`)){
+      const data=encoded.split(',')[1];
+      if(data&&data.length<best.data.length){
+        best={mimeType:mime,data};
+        if(data.length<=3_000_000)return {...best,label};
+      }
+    }
+  }
+  return {...best,label};
+}
 /** Copy zero-mask pixels directly: preserving RGBA values does not depend on the model. */
 export function compositePixels(base:Uint8ClampedArray,candidate:Uint8ClampedArray,mask:Uint8ClampedArray):Uint8ClampedArray {
   if(base.length!==candidate.length || base.length!==mask.length) throw new Error('画像サイズが一致しません');
