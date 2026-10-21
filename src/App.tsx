@@ -714,6 +714,7 @@ export default function App() {
     let totalInlineBase64 = canvasBase64 + resolvedRefs.reduce((sum, item) => sum + (item.fileUri ? 0 : item.data.length), 0);
     if (totalInlineBase64 > 12_000_000 && keyConnected) {
       const newlyUploaded: string[] = [];
+      const promotedMap = new Map<MediaInput, MediaInput>();
       const order = resolvedRefs.map((_, idx) => idx).sort((a, b) => resolvedRefs[b].data.length - resolvedRefs[a].data.length);
       try {
         for (const i of order) {
@@ -730,10 +731,12 @@ export default function App() {
             uploaded = await geminiClient.getFile(uploaded.name, keySession);
           }
           totalInlineBase64 -= ref.data.length;
-          resolvedRefs[i] = { mimeType: uploaded.mimeType, data: '', label: ref.label, fileUri: uploaded.uri, fileName: uploaded.name, fileState: uploaded.state };
+          const nextRef: MediaInput = { mimeType: uploaded.mimeType, data: '', label: ref.label, fileUri: uploaded.uri, fileName: uploaded.name, fileState: uploaded.state };
+          resolvedRefs[i] = nextRef;
+          promotedMap.set(ref, nextRef);
         }
         if (geminiClient.session() !== keySession) throw new Error('APIキーの接続が変更されたため生成を中止しました');
-        if (newlyUploaded.length) setReferences(resolvedRefs);
+        if (promotedMap.size) setReferences(prev => prev.map(entry => promotedMap.get(entry) ?? entry));
       } catch (caught) {
         for (const name of newlyUploaded) void geminiClient.deleteFile(name, keySession).catch(() => {});
         throw caught;

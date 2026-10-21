@@ -35,14 +35,18 @@ export function canvasToMedia(canvas:HTMLCanvasElement,label?:string):MediaInput
   }
   const png=target.toDataURL('image/png').split(',')[1];
   if(png.length<=3_000_000)return {mimeType:'image/png',data:png,label};
+  let best:{mimeType:string;data:string}={mimeType:'image/png',data:png};
   for(const mime of ['image/webp','image/jpeg'] as const){
     const encoded=target.toDataURL(mime,0.92);
     if(encoded.startsWith(`data:${mime};base64,`)){
       const data=encoded.split(',')[1];
-      if(data&&data.length<png.length)return {mimeType:mime,data,label};
+      if(data&&data.length<best.data.length){
+        best={mimeType:mime,data};
+        if(data.length<=3_000_000)return {...best,label};
+      }
     }
   }
-  return {mimeType:'image/png',data:png,label};
+  return {...best,label};
 }
 /** Copy zero-mask pixels directly: preserving RGBA values does not depend on the model. */
 export function compositePixels(base:Uint8ClampedArray,candidate:Uint8ClampedArray,mask:Uint8ClampedArray):Uint8ClampedArray {
