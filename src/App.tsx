@@ -9,11 +9,12 @@ import {
 } from 'lucide-react';
 import { geminiClient } from './api/client';
 import {
-  applyMask, canvasToMedia, downloadBlob, exportProject, fileToMedia, importProject,
-  loadImage, MAX_LAYER_OFFSET, MAX_PROJECT_PIXELS, renderProject, restoreProject, saveProject, uid, validateProjectImages,
+  applyMask, canvasBlendOperation, canvasToMedia, downloadBlob, exportProject, exportPsd, fileToMedia,
+  importProject, importPsd, loadImage, MAX_FILES_API_BYTES, MAX_INLINE_FILE_BYTES, MAX_LAYER_OFFSET,
+  MAX_PROJECT_PIXELS, renderProject, restoreProject, saveProject, uid, validateProjectImages,
 } from './lib/editor';
-import { DEFAULT_SETTINGS, MODEL, RATIOS } from './types';
-import type { BatchJob, ConversationTurn, GenerateResult, GenerationSettings, Layer, MediaInput, Project } from './types';
+import { BLEND_MODES, DEFAULT_SETTINGS, MODEL, RATIOS } from './types';
+import type { BatchJob, BlendMode, ConversationTurn, GenerateResult, GenerationSettings, Layer, MediaInput, Project } from './types';
 
 type Tool = 'move' | 'brush' | 'erase' | 'rectangle' | 'sketch' | 'text';
 type Mode = 'create' | 'edit' | 'mask' | 'sketch';
@@ -22,6 +23,16 @@ type Candidate = {
   image: string; original: string; mask: string; mode: Mode; revision: number; width: number; height: number;
   workWidth: number; workHeight: number; workX: number; workY: number;
   prompt: string; result: GenerateResult;
+};
+type BatchEditContext = {
+  mode: Mode; original: string; mask: string; revision: number; width: number; height: number;
+  workWidth: number; workHeight: number; workX: number; workY: number;
+};
+
+const BLEND_LABELS: Record<BlendMode, string> = {
+  'normal': '通常', 'multiply': '乗算', 'screen': 'スクリーン', 'overlay': 'オーバーレイ',
+  'darken': '比較（暗）', 'lighten': '比較（明）', 'color-dodge': '覆い焼きカラー', 'color-burn': '焼き込みカラー',
+  'hard-light': 'ハードライト', 'soft-light': 'ソフトライト', 'difference': '差の絶対値', 'exclusion': '除外',
 };
 
 const SIZE_PRICE: Record<GenerationSettings['size'], string> = {
@@ -126,6 +137,7 @@ export default function App() {
   const [error, setError] = useState('');
   const [candidate, setCandidate] = useState<Candidate | null>(null);
   const [batchText, setBatchText] = useState('');
+  const [batchEditCanvas, setBatchEditCanvas] = useState(false);
   const [batchJob, setBatchJob] = useState<BatchJob | null>(null);
   const [batchId, setBatchId] = useState('');
   const [batchOpen, setBatchOpen] = useState(false);
@@ -138,10 +150,12 @@ export default function App() {
   const sketchRef = useRef<HTMLCanvasElement>(null);
   const keyRef = useRef<HTMLInputElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
+  const psdFileRef = useRef<HTMLInputElement>(null);
   const menuBarRef = useRef<HTMLElement>(null);
   const layerFileRef = useRef<HTMLInputElement>(null);
   const projectFileRef = useRef<HTMLInputElement>(null);
   const referenceFileRef = useRef<HTMLInputElement>(null);
+  const filesApiRef = useRef<HTMLInputElement>(null);
   const viewportRef = useRef<HTMLDivElement>(null);
   const spaceRef = useRef(false);
   const panRef = useRef<{ x: number; y: number; left: number; top: number } | null>(null);
@@ -151,6 +165,7 @@ export default function App() {
   const batchRequestRef = useRef(0);
   const batchTargetRef = useRef<string | null>(null);
   const batchCreatingRef = useRef(false);
+  const batchContextRef = useRef<BatchEditContext | null>(null);
   const conversationRef = useRef<ConversationTurn[]>([]);
   const projectRef = useRef(project);
   const overlaysRef = useRef({ mask: '', sketch: '' });
@@ -200,7 +215,7 @@ export default function App() {
       previous.layers.some((layer, index) => {
         const other = next.layers[index];
         return layer.id !== other.id || layer.dataUrl !== other.dataUrl || layer.visible !== other.visible || layer.opacity !== other.opacity ||
-          (layer.x ?? 0) !== (other.x ?? 0) || (layer.y ?? 0) !== (other.y ?? 0);
+          (layer.x ?? 0) !== (other.x ?? 0) || (layer.y ?? 0) !== (other.y ?? 0) || (layer.blendMode ?? 'normal') !== (other.blendMode ?? 'normal');
       });
     const snapshot = { project: cloneProject(next), mask: nextMask, sketch: nextSketch };
     const h = historyRef.current;
@@ -261,7 +276,10 @@ export default function App() {
   }, [batchJob]);
 
   useEffect(() => {
-    const cleared = () => setKeyConnected(false);
+    const cleared = () => {
+      setKeyConnected(false);
+      setReferences(old => old.filter(item => !item.fileUri && !item.fileName));
+    };
     window.addEventListener('gemini-key-cleared', cleared);
     return () => window.removeEventListener('gemini-key-cleared', cleared);
   }, []);
@@ -390,8 +408,10 @@ export default function App() {
     ctx.clearRect(0, 0, canvas.width, canvas.height);
     ctx.drawImage(movement.below, 0, 0);
     ctx.globalAlpha = layer?.opacity ?? 1;
+    ctx.globalCompositeOperation = canvasBlendOperation(layer?.blendMode);
     ctx.drawImage(movement.image, (layer?.x ?? 0) + movement.dx, (layer?.y ?? 0) + movement.dy, movement.project.width, movement.project.height);
     ctx.globalAlpha = 1;
+    ctx.globalCompositeOperation = 'source-over';
     ctx.drawImage(movement.above, 0, 0);
   };
   const beginPan = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -502,8 +522,22 @@ export default function App() {
     } catch (caught) { setError(caught instanceof Error ? caught.message : '文字レイヤーを追加できませんでした'); }
   };
 
+  const openPsd = async (file?: File) => {
+    if (!file) return;
+    const snapshot = captureDocument();
+    if (file.size > 180_000_000) { setError('PSDファイルが大きすぎます'); return; }
+    try {
+      const next = await importPsd(await file.arrayBuffer(), file.name);
+      if (!documentUnchanged(snapshot.revision) || !commit(next, '', '')) return;
+      setSelectedLayer(next.layers.at(-1)?.id ?? null); setCandidate(null); setError(''); setStatus('PSDファイルを読み込みました');
+      conversationRef.current = [];
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'PSDファイルを開けませんでした'); }
+  };
   const openImage = async (file?: File) => {
     if (!file) return;
+    if (file.name.toLowerCase().endsWith('.psd') || file.type === 'image/vnd.adobe.photoshop' || file.type === 'application/x-photoshop') {
+      await openPsd(file); return;
+    }
     const snapshot = captureDocument();
     if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type)) { setError('PNG・JPEG・WebP画像を選んでください'); return; }
     try {
@@ -550,14 +584,70 @@ export default function App() {
       layers: [{ id: uid(), name: '透明な背景', dataUrl: blank.toDataURL('image/png'), visible: true, opacity: 1 }] }, '', '');
     setSelectedLayer(null); setCandidate(null); conversationRef.current = []; setStatus('新規文書を作成しました');
   };
-  const addReferences = async (files: FileList | null) => {
-    if (!files?.length) return;
-    const selected = [...files];
-    const totalBytes = selected.reduce((sum, f) => sum + f.size, 0) + references.reduce((sum, item) => sum + Math.ceil(item.data.length * .75), 0);
-    if (totalBytes > MAX_UPLOAD_BYTES) { setError('添付ファイルは合計20MB未満にしてください'); return; }
+  const uploadReferencesWithFilesApi = async (files: FileList | File[] | null) => {
+    const selected = files ? [...files] : [];
+    if (!selected.length || busy) return;
+    if (!keyConnected) { setKeyOpen(true); setError('Files APIのアップロードにはAPIキーの接続が必要です'); return; }
     if (selected.length + references.length > MAX_REFERENCES) { setError(`参照素材は最大${MAX_REFERENCES}件です`); return; }
     const valid = selected.filter(file => ['image/png', 'image/jpeg', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm', 'video/quicktime'].includes(file.type));
     if (valid.length !== selected.length) { setError('画像・PDF・動画を選んでください'); return; }
+    if (valid.some(file => file.size < 1 || file.size > MAX_FILES_API_BYTES)) { setError('Files APIは200MB以内のファイルに対応しています'); return; }
+    const keySession = geminiClient.session();
+    setBusy(true); setError(''); setStatus('Google Files APIへアップロードしています…');
+    try {
+      const items: MediaInput[] = [];
+      for (const file of valid) {
+        const bytes = await file.arrayBuffer();
+        let uploaded = await geminiClient.uploadFile({ mimeType: file.type, bytes, label: file.name }, keySession);
+        for (let attempt = 0; uploaded.state === 'PROCESSING' && attempt < 3; attempt++) {
+          await new Promise(resolve => setTimeout(resolve, 250));
+          uploaded = await geminiClient.getFile(uploaded.name, keySession);
+        }
+        items.push({ mimeType: uploaded.mimeType, data: '', label: file.name.slice(0, 150), fileUri: uploaded.uri, fileName: uploaded.name, fileState: uploaded.state });
+      }
+      if (geminiClient.session() !== keySession) throw new Error('APIキーの接続が変更されたためアップロードを中止しました');
+      setReferences(previous => [...previous, ...items]);
+      setStatus(`${items.length}件をFiles APIへアップロードしました`); setError('');
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Files APIへアップロードできませんでした');
+    } finally { setBusy(false); }
+  };
+  const refreshUploadedFile = async (index: number) => {
+    const item = references[index];
+    if (!item?.fileName) return;
+    if (!keyConnected) { setKeyOpen(true); return; }
+    const keySession = geminiClient.session();
+    try {
+      const updated = await geminiClient.getFile(item.fileName, keySession);
+      if (geminiClient.session() !== keySession) return;
+      setReferences(old => old.map((entry, j) => j === index ? { ...entry, fileState: updated.state, fileUri: updated.uri } : entry));
+      setStatus(`Files API状態: ${updated.state}`); setError('');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'Files APIの状態を確認できませんでした'); }
+  };
+  const removeReference = (index: number) => {
+    const item = references[index];
+    const keySession = geminiClient.session();
+    setReferences(old => old.filter((_, j) => j !== index));
+    if (item?.fileName && keyConnected) {
+      void geminiClient.deleteFile(item.fileName, keySession).then(() => {
+        if (geminiClient.session() === keySession) setStatus('Files APIのファイルを削除しました');
+      }).catch(() => {});
+    }
+  };
+  const addReferences = async (files: FileList | null) => {
+    if (!files?.length) return;
+    const selected = [...files];
+    if (selected.length + references.length > MAX_REFERENCES) { setError(`参照素材は最大${MAX_REFERENCES}件です`); return; }
+    const valid = selected.filter(file => ['image/png', 'image/jpeg', 'image/webp', 'application/pdf', 'video/mp4', 'video/webm', 'video/quicktime'].includes(file.type));
+    if (valid.length !== selected.length) { setError('画像・PDF・動画を選んでください'); return; }
+    const inlineBytes = references.reduce((sum, item) => sum + (item.fileUri ? 0 : Math.ceil(item.data.length * .75)), 0);
+    const totalBytes = selected.reduce((sum, f) => sum + f.size, 0) + inlineBytes;
+    const needsFilesApi = selected.some(f => f.size > MAX_INLINE_FILE_BYTES) || totalBytes > MAX_UPLOAD_BYTES;
+    if (needsFilesApi) {
+      if (keyConnected) { await uploadReferencesWithFilesApi(selected); return; }
+      setError(totalBytes > MAX_UPLOAD_BYTES ? '添付ファイルは合計20MB未満にしてください（APIキー接続時はFiles APIで200MBまで対応）' : '各ファイルは14MB以内にしてください（APIキー接続時はFiles APIで200MBまで対応）');
+      return;
+    }
     try {
       const items = await Promise.all(valid.map(fileToMedia));
       setReferences(previous => [...previous, ...items]);
@@ -586,6 +676,62 @@ export default function App() {
     geminiClient.clearKey(); setKeyConnected(false); setStatus('APIキーを破棄しました'); setKeyOpen(false);
   };
 
+  const prepareGenerationPayload = async (targetMode: Mode, originalProject: Project, maskSnapshot: string, sketchSnapshot: string) => {
+    const media: MediaInput[] = [];
+    let original = '';
+    let geometry = { ratio: settings.ratio, width: originalProject.width, height: originalProject.height, x: 0, y: 0 };
+    if (targetMode !== 'create') {
+      const rendered = await renderProject(originalProject);
+      original = rendered.toDataURL('image/png');
+      const work = targetMode === 'mask' ? nearestRatio(originalProject.width, originalProject.height) : geometry;
+      geometry = work;
+      const source = document.createElement('canvas'); source.width = work.width; source.height = work.height;
+      source.getContext('2d')!.drawImage(rendered, work.x, work.y);
+      media.push(canvasToMedia(source, '編集元画像'));
+      if (targetMode === 'mask' || targetMode === 'sketch') {
+        const overlay = targetMode === 'mask' ? maskSnapshot : sketchSnapshot;
+        const overlayImage = await imageFromData(overlay);
+        const annotated = document.createElement('canvas'); annotated.width = work.width; annotated.height = work.height;
+        const ctx = annotated.getContext('2d')!; ctx.drawImage(source, 0, 0);
+        if (targetMode === 'mask') {
+          const tint = document.createElement('canvas'); tint.width = work.width; tint.height = work.height;
+          const tintCtx = tint.getContext('2d')!; tintCtx.drawImage(overlayImage, work.x, work.y);
+          tintCtx.globalCompositeOperation = 'source-in'; tintCtx.fillStyle = '#ed665e'; tintCtx.fillRect(0, 0, tint.width, tint.height);
+          ctx.globalAlpha = .65; ctx.drawImage(tint, 0, 0); ctx.globalAlpha = 1;
+        } else ctx.drawImage(overlayImage, work.x, work.y);
+        media.push(canvasToMedia(annotated, targetMode === 'mask' ? '選択範囲' : '手描きスケッチ'));
+      }
+    }
+    const room = MAX_REFERENCES - media.filter(item => item.mimeType.startsWith('image/')).length;
+    if (references.filter(item => item.mimeType.startsWith('image/')).length > room) throw new Error(`画像入力は合計${MAX_REFERENCES}枚以内にしてください`);
+    media.push(...references);
+    const requestSettings = targetMode === 'mask' ? { ...settings, ratio: geometry.ratio } : settings;
+    return { media, original, geometry, requestSettings };
+  };
+  const buildModeInstruction = (rawPrompt: string, targetMode: Mode): string => {
+    let instruction = rawPrompt.trim();
+    if (targetMode === 'mask') instruction += '\n2枚目の色付き選択範囲だけを編集し、周囲の構図を保ってください。選択範囲の表示色は完成画像に残さないでください。';
+    if (targetMode === 'sketch') instruction += '\n2枚目は手描き指示です。線を完成画像に残さず、指示として解釈してください。';
+    return instruction;
+  };
+  const composeMaskResult = async (candidateImageUrl: string, ctx: { original: string; mask: string; width: number; height: number; workWidth: number; workHeight: number; workX: number; workY: number }): Promise<string> => {
+    const proposed = await imageFromData(candidateImageUrl);
+    const workRatio = ctx.workWidth / ctx.workHeight;
+    const proposedRatio = proposed.naturalWidth / proposed.naturalHeight;
+    if (Math.abs(proposedRatio / workRatio - 1) > .015) throw new Error('候補の縦横比が編集元と異なります。比率を合わせて再生成してください');
+    const cropped = document.createElement('canvas'); cropped.width = ctx.width; cropped.height = ctx.height;
+    const scaleX = proposed.naturalWidth / ctx.workWidth;
+    const scaleY = proposed.naturalHeight / ctx.workHeight;
+    cropped.getContext('2d')!.drawImage(proposed,
+      ctx.workX * scaleX, ctx.workY * scaleY,
+      ctx.width * scaleX, ctx.height * scaleY,
+      0, 0, ctx.width, ctx.height);
+    const maskImage = await imageFromData(ctx.mask);
+    const maskCanvas = document.createElement('canvas'); maskCanvas.width = ctx.width; maskCanvas.height = ctx.height;
+    maskCanvas.getContext('2d')!.drawImage(maskImage, 0, 0);
+    return applyMask(ctx.original, cropped.toDataURL('image/png'), maskCanvas);
+  };
+
   const runGeneration = async () => {
     if (busy) return;
     if (!keyConnected) { setKeyOpen(true); return; }
@@ -599,38 +745,8 @@ export default function App() {
     const sketchSnapshot = canvasData(sketchRef.current);
     setBusy(true); setError(''); setStatus('Nano Banana 2.1 に送信しています…');
     try {
-      const media: MediaInput[] = [];
-      let original = '';
-      let geometry = { ratio: settings.ratio, width: originalProject.width, height: originalProject.height, x: 0, y: 0 };
-      if (mode !== 'create') {
-        const rendered = await renderProject(originalProject);
-        original = rendered.toDataURL('image/png');
-        const work = mode === 'mask' ? nearestRatio(originalProject.width, originalProject.height) : geometry;
-        geometry = work;
-        const source = document.createElement('canvas'); source.width = work.width; source.height = work.height;
-        source.getContext('2d')!.drawImage(rendered, work.x, work.y);
-        media.push(canvasToMedia(source, '編集元画像'));
-        if (mode === 'mask' || mode === 'sketch') {
-          const overlay = mode === 'mask' ? maskSnapshot : sketchSnapshot;
-          const overlayImage = await imageFromData(overlay);
-          const annotated = document.createElement('canvas'); annotated.width = work.width; annotated.height = work.height;
-          const ctx = annotated.getContext('2d')!; ctx.drawImage(source, 0, 0);
-          if (mode === 'mask') {
-            const tint = document.createElement('canvas'); tint.width = work.width; tint.height = work.height;
-            const tintCtx = tint.getContext('2d')!; tintCtx.drawImage(overlayImage, work.x, work.y);
-            tintCtx.globalCompositeOperation = 'source-in'; tintCtx.fillStyle = '#ed665e'; tintCtx.fillRect(0, 0, tint.width, tint.height);
-            ctx.globalAlpha = .65; ctx.drawImage(tint, 0, 0); ctx.globalAlpha = 1;
-          } else ctx.drawImage(overlayImage, work.x, work.y);
-          media.push(canvasToMedia(annotated, mode === 'mask' ? '選択範囲' : '手描きスケッチ'));
-        }
-      }
-      const room = MAX_REFERENCES - media.filter(item => item.mimeType.startsWith('image/')).length;
-      if (references.filter(item => item.mimeType.startsWith('image/')).length > room) throw new Error(`画像入力は合計${MAX_REFERENCES}枚以内にしてください`);
-      media.push(...references);
-      let instruction = prompt.trim();
-      if (mode === 'mask') instruction += '\n2枚目の色付き選択範囲だけを編集し、周囲の構図を保ってください。選択範囲の表示色は完成画像に残さないでください。';
-      if (mode === 'sketch') instruction += '\n2枚目は手描き指示です。線を完成画像に残さず、指示として解釈してください。';
-      const requestSettings = mode === 'mask' ? { ...settings, ratio: geometry.ratio } : settings;
+      const { media, original, geometry, requestSettings } = await prepareGenerationPayload(mode, originalProject, maskSnapshot, sketchSnapshot);
+      const instruction = buildModeInstruction(prompt, mode);
       const result = await geminiClient.generate({ prompt: instruction, media, settings: requestSettings,
         history: mode === 'create' ? [] : conversationRef.current }, keySession);
       if (geminiClient.session() !== keySession) throw new Error('APIキーの接続が変更されたため生成を中止しました');
@@ -650,24 +766,7 @@ export default function App() {
     const selectedCandidate = candidate;
     if (snapshot.revision !== selectedCandidate.revision && !window.confirm('候補の生成後にキャンバスを編集しました。この候補は生成開始時の画像に基づきます。現在の編集を置き換えて採用しますか？')) return;
     try {
-      let dataUrl = candidate.image;
-      if (candidate.mode === 'mask') {
-        const proposed = await imageFromData(candidate.image);
-        const workRatio = candidate.workWidth / candidate.workHeight;
-        const proposedRatio = proposed.naturalWidth / proposed.naturalHeight;
-        if (Math.abs(proposedRatio / workRatio - 1) > .015) throw new Error('候補の縦横比が編集元と異なります。比率を合わせて再生成してください');
-        const cropped = document.createElement('canvas'); cropped.width = candidate.width; cropped.height = candidate.height;
-        const scaleX = proposed.naturalWidth / candidate.workWidth;
-        const scaleY = proposed.naturalHeight / candidate.workHeight;
-        cropped.getContext('2d')!.drawImage(proposed,
-          candidate.workX * scaleX, candidate.workY * scaleY,
-          candidate.width * scaleX, candidate.height * scaleY,
-          0, 0, candidate.width, candidate.height);
-        const maskImage = await imageFromData(candidate.mask);
-        const maskCanvas = document.createElement('canvas'); maskCanvas.width = candidate.width; maskCanvas.height = candidate.height;
-        maskCanvas.getContext('2d')!.drawImage(maskImage, 0, 0);
-        dataUrl = await applyMask(candidate.original, cropped.toDataURL('image/png'), maskCanvas);
-      }
+      const dataUrl = candidate.mode === 'mask' ? await composeMaskResult(candidate.image, candidate) : candidate.image;
       const image = await imageFromData(dataUrl);
       if (!documentUnchanged(snapshot.revision)) return;
       const next: Project = { ...snapshot.project, width: image.naturalWidth, height: image.naturalHeight,
@@ -685,6 +784,12 @@ export default function App() {
       const blob = await new Promise<Blob>((resolve, reject) => canvas.toBlob(value => value ? resolve(value) : reject(new Error('PNG作成に失敗しました')), 'image/png'));
       downloadBlob(blob, `${project.name || 'nano-banana-studio'}.png`); setStatus('PNGを書き出しました');
     } catch { setError('PNGを書き出せませんでした'); }
+  };
+  const exportPsdFile = async () => {
+    try {
+      const blob = await exportPsd(project);
+      downloadBlob(blob, `${project.name || 'nano-banana-studio'}.psd`); setStatus('PSDを書き出しました');
+    } catch (caught) { setError(caught instanceof Error ? caught.message : 'PSDを書き出せませんでした'); }
   };
   const exportJson = () => {
     try {
@@ -747,13 +852,27 @@ export default function App() {
     const lines = batchText.split('\n').map(x => x.trim()).filter(Boolean);
     if (!keyConnected) { setKeyOpen(true); return; }
     if (!lines.length || lines.length > 20) { setError('Batchは1〜20行の指示を入力してください'); return; }
+    const activeMode: Mode = batchEditCanvas ? mode : 'create';
+    if (activeMode === 'mask' && !containsDrawing(maskRef.current)) { setError('選択ブラシまたは矩形選択で編集範囲を描いてください'); return; }
+    if (activeMode === 'sketch' && !containsDrawing(sketchRef.current)) { setError('スケッチツールで線を描いてください'); return; }
+    const originalProject = cloneProject(project);
+    const keySession = geminiClient.session();
+    const revision = revisionRef.current;
+    const maskSnapshot = canvasData(maskRef.current);
+    const sketchSnapshot = canvasData(sketchRef.current);
     const request = ++batchRequestRef.current;
     batchCreatingRef.current = true;
     batchTargetRef.current = null;
     setBatchJob(null); setBatchId('');
     setBusy(true); setError('');
     try {
-      const job = await geminiClient.createBatch(lines.map(line => ({ prompt: line, media: [], settings: { ...settings, webSearch: false, imageSearch: false } })));
+      const { media, original, geometry, requestSettings } = await prepareGenerationPayload(activeMode, originalProject, maskSnapshot, sketchSnapshot);
+      batchContextRef.current = activeMode === 'create' ? null : {
+        mode: activeMode, original, mask: maskSnapshot, revision,
+        width: originalProject.width, height: originalProject.height,
+        workWidth: geometry.width, workHeight: geometry.height, workX: geometry.x, workY: geometry.y,
+      };
+      const job = await geminiClient.createBatch(lines.map(line => ({ prompt: buildModeInstruction(line, activeMode), media, settings: requestSettings })), keySession);
       if (batchRequestRef.current !== request || batchTargetRef.current !== null) return;
       batchTargetRef.current = job.name;
       setBatchJob(job); setBatchId(job.name); setStatus('Batchジョブを作成しました');
@@ -796,17 +915,21 @@ export default function App() {
     const name = batchId.trim();
     if (!/^batches\/[A-Za-z0-9_-]{1,200}$/.test(name)) { setError('Batch IDは batches/… の形式で入力してください'); return; }
     batchRequestRef.current += 1; batchTargetRef.current = name;
+    batchContextRef.current = null;
     setBatchId(name);
     setBatchJob({ name, state: 'PENDING', images: [], errors: 0 });
     setError(''); setStatus('Batch IDを読み込みました。キーを接続して更新できます');
   };
   const adoptBatchImage = async (url: string) => {
     const snapshot = captureDocument();
+    const ctx = batchContextRef.current;
+    if (ctx && snapshot.revision !== ctx.revision && !window.confirm('Batch開始後にキャンバスを編集しました。この結果は開始時の画像に基づきます。現在の編集を置き換えて採用しますか？')) return;
     try {
-      const image = await imageFromData(url);
+      const dataUrl = ctx?.mode === 'mask' ? await composeMaskResult(url, ctx) : url;
+      const image = await imageFromData(dataUrl);
       const next = { ...snapshot.project, width: image.naturalWidth, height: image.naturalHeight,
         layers: [...snapshot.project.layers.map(layer => ({ ...layer, visible: false })),
-          { id: uid(), name: 'Batchの結果', dataUrl: url, visible: true, opacity: 1 }] };
+          { id: uid(), name: 'Batchの結果', dataUrl, visible: true, opacity: 1 }] };
       await validateProjectImages(next);
       if (!documentUnchanged(snapshot.revision) || !commit(next, '', '')) return;
       conversationRef.current = []; setStatus('Batch画像を採用しました');
@@ -818,10 +941,12 @@ export default function App() {
   const isStale = candidate && candidate.revision !== revisionRef.current;
   return (
     <div className="app-shell">
-      <input ref={fileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={e => { void openImage(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={fileRef} hidden type="file" accept="image/png,image/jpeg,image/webp,.psd" onChange={e => { void openImage(e.target.files?.[0]); e.target.value = ''; }} />
+      <input ref={psdFileRef} hidden type="file" accept=".psd,image/vnd.adobe.photoshop,application/x-photoshop" onChange={e => { void openPsd(e.target.files?.[0]); e.target.value = ''; }} />
       <input ref={layerFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp" onChange={e => { void addImageLayer(e.target.files?.[0]); e.target.value = ''; }} />
       <input ref={projectFileRef} hidden type="file" accept=".json,application/json" onChange={e => { void importJson(e.target.files?.[0]); e.target.value = ''; }} />
       <input ref={referenceFileRef} hidden type="file" accept="image/png,image/jpeg,image/webp,application/pdf,video/mp4,video/webm,video/quicktime" multiple onChange={e => { void addReferences(e.target.files); e.target.value = ''; }} />
+      <input ref={filesApiRef} hidden type="file" accept="image/png,image/jpeg,image/webp,application/pdf,video/mp4,video/webm,video/quicktime" multiple onChange={e => { void uploadReferencesWithFilesApi(e.target.files); e.target.value = ''; }} />
       <header className="topbar">
         <div className="brand"><div className="brand-mark"><Aperture size={22} strokeWidth={1.9} /></div><div><strong>banana<span>studio</span></strong><small>NANO BANANA 2.1 WORKSPACE</small></div></div>
         <nav ref={menuBarRef} className="menu-bar" aria-label="メニューバー" onClick={e => {
@@ -831,7 +956,7 @@ export default function App() {
           if (title) menuBarRef.current?.querySelectorAll('details[open]').forEach(menu => { if (menu !== title.parentElement) menu.removeAttribute('open'); });
           target.closest('.menu-pop button, .menu-pop a')?.closest('details')?.removeAttribute('open');
         }}>
-          <details><summary>ファイル</summary><div className="menu-pop"><button onClick={newDocument}>新規文書</button><button onClick={() => fileRef.current?.click()}>画像を開く</button><button onClick={() => projectFileRef.current?.click()}>プロジェクトを開く</button><button onClick={() => void save()}>保存 <kbd>⌘S</kbd></button><button onClick={() => void exportPng()}>PNGを書き出す</button><button onClick={exportJson}>プロジェクトを書き出す</button></div></details>
+          <details><summary>ファイル</summary><div className="menu-pop"><button onClick={newDocument}>新規文書</button><button onClick={() => fileRef.current?.click()}>画像を開く</button><button onClick={() => psdFileRef.current?.click()}>PSDを開く</button><button onClick={() => projectFileRef.current?.click()}>プロジェクトを開く</button><button onClick={() => void save()}>保存 <kbd>⌘S</kbd></button><button onClick={() => void exportPng()}>PNGを書き出す</button><button onClick={() => void exportPsdFile()}>PSDを書き出す</button><button onClick={exportJson}>プロジェクトを書き出す</button></div></details>
           <details><summary>編集</summary><div className="menu-pop"><button onClick={() => historyStep(-1)}>元に戻す <kbd>⌘Z</kbd></button><button onClick={() => historyStep(1)}>やり直し <kbd>⇧⌘Z</kbd></button></div></details>
           <details><summary>画像</summary><div className="menu-pop"><button onClick={expandCanvas}>キャンバスを拡張</button></div></details>
           <details><summary>レイヤー</summary><div className="menu-pop"><button onClick={() => setRightTab('layers')}>レイヤーパネル</button><button onClick={() => layerFileRef.current?.click()}>画像レイヤーを追加</button><button onClick={() => setTool('text')}>文字を追加 <kbd>T</kbd></button></div></details>
@@ -846,7 +971,7 @@ export default function App() {
           <span className="top-divider" />
           <button className="text-btn desktop-only" onClick={() => projectFileRef.current?.click()}><FolderOpen size={16} /> 読込</button>
           <button className="text-btn desktop-only" onClick={() => void save()}><Save size={16} /> 保存</button>
-          <div className="export-menu"><button className="text-btn" onClick={exportPng}><Download size={16} /> PNG</button><button className="chevron-btn" onClick={exportJson} title="プロジェクトを書き出す" aria-label="プロジェクトを書き出す"><ChevronDown size={15} /></button></div>
+          <div className="export-menu"><button className="text-btn" onClick={exportPng}><Download size={16} /> PNG</button><button className="text-btn psd-btn" onClick={() => void exportPsdFile()} title="PSDを書き出す">PSD</button><button className="chevron-btn" onClick={exportJson} title="プロジェクトを書き出す" aria-label="プロジェクトを書き出す"><ChevronDown size={15} /></button></div>
           <button className={`key-pill ${keyConnected ? 'connected' : ''}`} onClick={() => setKeyOpen(true)}><span className="key-led" /><KeyRound size={14} /> {keyConnected ? 'キー接続中' : 'APIキーを設定'}</button>
         </div>
       </header>
@@ -909,12 +1034,12 @@ export default function App() {
               <button className="section-toggle advanced-toggle" onClick={() => setCollapsed(s => ({ ...s, advanced: !s.advanced }))}><span>詳細オプション</span><ChevronDown size={16} className={collapsed.advanced ? '' : 'rotated'} /></button>
               {!collapsed.advanced && <div className="advanced-settings"><label>思考レベル<select aria-label="思考レベル" value={settings.thinking} onChange={e => setSettings(s => ({ ...s, thinking: e.target.value as GenerationSettings['thinking'] }))}><option value="minimal">minimal · 速い</option><option value="medium">medium · 標準</option><option value="high">high · 詳細</option></select></label><label className="toggle-row"><span><Search size={15} /> Web検索</span><input type="checkbox" checked={settings.webSearch} onChange={e => setSettings(s => ({ ...s, webSearch: e.target.checked }))} /></label><label className="toggle-row"><span><FileImage size={15} /> 画像検索</span><input type="checkbox" checked={settings.imageSearch} onChange={e => setSettings(s => ({ ...s, imageSearch: e.target.checked }))} /></label></div>}
             </section>
-            <section className="panel-section refs-section"><button className="section-toggle" onClick={() => setCollapsed(s => ({ ...s, refs: !s.refs }))}><span><ImagePlus size={16} /> 参照素材 <em>{references.length}</em></span><ChevronDown size={16} className={collapsed.refs ? '' : 'rotated'} /></button>{!collapsed.refs && <><p>画像・PDF・動画を添付。画像入力は合計14枚まで。</p><div className="reference-list">{references.map((item, i) => <div key={i} className="reference-chip">{item.mimeType.startsWith('image/') ? <img src={`data:${item.mimeType};base64,${item.data}`} alt="参照画像" /> : <FileImage size={18} />}<span>{item.label || `参照 ${i + 1}`}</span><button title="削除" aria-label={`参照${i + 1}を削除`} onClick={() => setReferences(old => old.filter((_, j) => i !== j))}><X size={14} /></button></div>)}</div><button className="reference-add" onClick={() => referenceFileRef.current?.click()}><Plus size={17} /> 参照素材を追加</button></>}</section>
+            <section className="panel-section refs-section"><button className="section-toggle" onClick={() => setCollapsed(s => ({ ...s, refs: !s.refs }))}><span><ImagePlus size={16} /> 参照素材 <em>{references.length}</em></span><ChevronDown size={16} className={collapsed.refs ? '' : 'rotated'} /></button>{!collapsed.refs && <><p>画像・PDF・動画を添付（14MB以下は直接添付、Files APIで最大200MB対応）。画像入力は合計14枚まで。</p><div className="reference-list">{references.map((item, i) => <div key={i} className="reference-chip">{item.mimeType.startsWith('image/') && item.data ? <img src={`data:${item.mimeType};base64,${item.data}`} alt="参照画像" /> : <FileImage size={18} />}<span>{item.label || `参照 ${i + 1}`}</span>{item.fileUri && <small className="file-api-badge">{item.fileState === 'PROCESSING' ? '処理中' : 'Files API'}</small>}{item.fileUri && item.fileState === 'PROCESSING' && <button title="状態を更新" aria-label={`参照${i + 1}の状態を更新`} onClick={() => void refreshUploadedFile(i)}><RotateCcw size={13} /></button>}<button title="削除" aria-label={`参照${i + 1}を削除`} onClick={() => removeReference(i)}><X size={14} /></button></div>)}</div><button className="reference-add" onClick={() => referenceFileRef.current?.click()}><Plus size={17} /> 参照素材を追加</button><button className="reference-add files-api-add" disabled={busy} onClick={() => filesApiRef.current?.click()}><Plus size={17} /> Files APIでアップロード（最大200MB）</button></>}</section>
             <div className="generate-area"><div className="price-note"><span>画像出力の目安</span><strong>{SIZE_PRICE[settings.size]} / 枚</strong></div><button className="generate-button" disabled={busy} onClick={() => void runGeneration()}>{busy ? <><span className="spin" /> 生成中…</> : <><Sparkles size={18} /> {keyConnected ? '画像を生成' : 'キーを設定して生成'} <span className="button-arrow" aria-hidden="true">→</span></>}</button><p>入力・思考・検索などは別料金。生成はボタンを押した時だけ実行します。</p></div>
-            <section className="panel-section batch-section"><button className="section-toggle" onClick={() => setBatchOpen(v => !v)}><span><FilePlus2 size={16} /> Batch生成</span><ChevronDown size={16} className={batchOpen ? 'rotated' : ''} /></button>{batchOpen && <div className="batch-body"><p>1行に1つの指示を入力。最大20件。Batchでは検索と参照素材を使いません。</p><textarea aria-label="Batch生成の指示" value={batchText} onChange={e => setBatchText(e.target.value)} placeholder="夕暮れの都市\n淡い緑の森" rows={3} /><button className="secondary-button" disabled={busy} onClick={() => void startBatch()}>Batchを開始</button><label className="batch-id-label">既存のBatch ID</label><div className="batch-id-row"><input aria-label="Batch ID" value={batchId} onChange={e => setBatchId(e.target.value)} placeholder="batches/…" /><button disabled={busy} onClick={loadBatchId}>読込</button></div>{batchJob && <div className="batch-result"><span>{batchJob.state} · {batchJob.images.length}枚 · エラー {batchJob.errors}</span><div className="batch-actions"><button onClick={() => void refreshBatch()}><RotateCcw size={14} /> 更新</button><button onClick={() => void cancelBatch()} disabled={['SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(batchJob.state.replace('BATCH_STATE_', ''))}>中止</button></div><div className="batch-thumbs">{batchJob.images.map((image, i) => <button key={i} onClick={() => void adoptBatchImage(image.dataUrl)}><img src={image.dataUrl} alt={`Batch結果 ${i + 1}`} /><span>採用</span></button>)}</div></div>}</div>}</section>
+            <section className="panel-section batch-section"><button className="section-toggle" onClick={() => setBatchOpen(v => !v)}><span><FilePlus2 size={16} /> Batch生成</span><ChevronDown size={16} className={batchOpen ? 'rotated' : ''} /></button>{batchOpen && <div className="batch-body"><p>1行に1つの指示を入力（最大20件）。添付中の参照素材やWeb・画像検索設定も反映されます（検索ON時は各行に検索料金がかかる場合があります）。</p><label className="toggle-row batch-mode-toggle"><span>キャンバスの画像を編集（現在のモード：{mode === 'mask' ? '部分編集' : mode === 'sketch' ? 'スケッチ' : mode === 'edit' ? '全体編集' : '新規生成'}）</span><input type="checkbox" aria-label="Batchでキャンバスの画像を編集" checked={batchEditCanvas} onChange={e => setBatchEditCanvas(e.target.checked)} /></label><textarea aria-label="Batch生成の指示" value={batchText} onChange={e => setBatchText(e.target.value)} placeholder="夕暮れの都市\n淡い緑の森" rows={3} /><button className="secondary-button" disabled={busy} onClick={() => void startBatch()}>Batchを開始</button><label className="batch-id-label">既存のBatch ID</label><div className="batch-id-row"><input aria-label="Batch ID" value={batchId} onChange={e => setBatchId(e.target.value)} placeholder="batches/…" /><button disabled={busy} onClick={loadBatchId}>読込</button></div>{batchJob && <div className="batch-result"><span>{batchJob.state} · {batchJob.images.length}枚 · エラー {batchJob.errors}</span><div className="batch-actions"><button onClick={() => void refreshBatch()}><RotateCcw size={14} /> 更新</button><button onClick={() => void cancelBatch()} disabled={['SUCCEEDED', 'FAILED', 'CANCELLED', 'EXPIRED'].includes(batchJob.state.replace('BATCH_STATE_', ''))}>中止</button></div><div className="batch-thumbs">{batchJob.images.map((image, i) => <button key={i} onClick={() => void adoptBatchImage(image.dataUrl)}><img src={image.dataUrl} alt={`Batch結果 ${i + 1}`} /><span>採用</span></button>)}</div>{batchJob.citations && batchJob.citations.length > 0 && <div className="citation-list batch-citations">参照：{batchJob.citations.map((cite, i) => <a key={i} href={cite.url} target="_blank" rel="noopener noreferrer">{cite.title || cite.url}</a>)}</div>}{batchJob.suggestions && batchJob.suggestions.length > 0 && <div className="citation-list batch-citations">検索の提案：{batchJob.suggestions.map((cite, i) => <a key={i} href={cite.url} target="_blank" rel="noopener noreferrer">{cite.title || cite.url}</a>)}</div>}</div>}</div>}</section>
             <div className="panel-footer"><CircleHelp size={15} /><span>キーはこのタブ内の一時メモリで扱います。画像やプロジェクトにキーは含まれません。</span></div>
             </>}
-            {rightTab === 'layers' && <section className="panel-section layers-section"><div className="section-head"><span><Layers3 size={16} /> レイヤー</span><span>{project.layers.length} 件</span></div><div className="layers-list">{[...project.layers].reverse().map(layer => <div key={layer.id} className={`layer-row ${selectedLayer === layer.id ? 'active' : ''}`} onClick={() => setSelectedLayer(layer.id)}><button className="layer-eye" title={layer.visible ? '非表示' : '表示'} aria-label={`${layer.name}を${layer.visible ? '非表示' : '表示'}`} onClick={e => { e.stopPropagation(); updateLayer(layer.id, l => ({ ...l, visible: !l.visible })); }}>{layer.visible ? <Eye size={17} /> : <EyeOff size={17} />}</button><img src={layer.dataUrl} alt="" /><div className="layer-main"><strong>{layer.name}</strong><small>{Math.round(layer.opacity * 100)}% · 画像レイヤー</small></div><div className="layer-arrows"><button title="前面に移動" aria-label="前面に移動" onClick={e => { e.stopPropagation(); updateProject(p => { const layers = [...p.layers]; const i = layers.findIndex(l => l.id === layer.id); if (i < layers.length - 1) [layers[i], layers[i + 1]] = [layers[i + 1], layers[i]]; return { ...p, layers }; }); }}><ArrowUp size={12} /></button><button title="背面に移動" aria-label="背面に移動" onClick={e => { e.stopPropagation(); updateProject(p => { const layers = [...p.layers]; const i = layers.findIndex(l => l.id === layer.id); if (i > 0) [layers[i], layers[i - 1]] = [layers[i - 1], layers[i]]; return { ...p, layers }; }); }}><ArrowDown size={12} /></button></div></div>)}{selectedLayer && project.layers.some(l => l.id === selectedLayer) && <div className="layer-options"><label>不透明度 <input aria-label="レイヤー不透明度" type="range" min="0" max="100" value={Math.round((project.layers.find(l => l.id === selectedLayer)?.opacity || 0) * 100)} onChange={e => updateLayer(selectedLayer, l => ({ ...l, opacity: Number(e.target.value) / 100 }))} /></label><button aria-label="レイヤーを削除" onClick={() => { updateProject(p => ({ ...p, layers: p.layers.filter(l => l.id !== selectedLayer) })); setSelectedLayer(null); }}><Trash2 size={15} /></button></div>}<button className="reference-add" onClick={() => layerFileRef.current?.click()}><Plus size={17} /> 画像レイヤーを追加</button></div></section>}
+            {rightTab === 'layers' && <section className="panel-section layers-section"><div className="section-head"><span><Layers3 size={16} /> レイヤー</span><span>{project.layers.length} 件</span></div><div className="layers-list">{[...project.layers].reverse().map(layer => <div key={layer.id} className={`layer-row ${selectedLayer === layer.id ? 'active' : ''}`} onClick={() => setSelectedLayer(layer.id)}><button className="layer-eye" title={layer.visible ? '非表示' : '表示'} aria-label={`${layer.name}を${layer.visible ? '非表示' : '表示'}`} onClick={e => { e.stopPropagation(); updateLayer(layer.id, l => ({ ...l, visible: !l.visible })); }}>{layer.visible ? <Eye size={17} /> : <EyeOff size={17} />}</button><img src={layer.dataUrl} alt="" /><div className="layer-main"><strong>{layer.name}</strong><small>{Math.round(layer.opacity * 100)}% · {BLEND_LABELS[layer.blendMode ?? 'normal']}</small></div><div className="layer-arrows"><button title="前面に移動" aria-label="前面に移動" onClick={e => { e.stopPropagation(); updateProject(p => { const layers = [...p.layers]; const i = layers.findIndex(l => l.id === layer.id); if (i < layers.length - 1) [layers[i], layers[i + 1]] = [layers[i + 1], layers[i]]; return { ...p, layers }; }); }}><ArrowUp size={12} /></button><button title="背面に移動" aria-label="背面に移動" onClick={e => { e.stopPropagation(); updateProject(p => { const layers = [...p.layers]; const i = layers.findIndex(l => l.id === layer.id); if (i > 0) [layers[i], layers[i - 1]] = [layers[i - 1], layers[i]]; return { ...p, layers }; }); }}><ArrowDown size={12} /></button></div></div>)}{selectedLayer && project.layers.some(l => l.id === selectedLayer) && <div className="layer-options"><label>不透明度 <input aria-label="レイヤー不透明度" type="range" min="0" max="100" value={Math.round((project.layers.find(l => l.id === selectedLayer)?.opacity || 0) * 100)} onChange={e => updateLayer(selectedLayer, l => ({ ...l, opacity: Number(e.target.value) / 100 }))} /></label><label>描画モード <select aria-label="描画モード" value={project.layers.find(l => l.id === selectedLayer)?.blendMode ?? 'normal'} onChange={e => updateLayer(selectedLayer, l => ({ ...l, blendMode: e.target.value as BlendMode }))}>{BLEND_MODES.map(bm => <option key={bm} value={bm}>{BLEND_LABELS[bm]}</option>)}</select></label><button aria-label="レイヤーを削除" onClick={() => { updateProject(p => ({ ...p, layers: p.layers.filter(l => l.id !== selectedLayer) })); setSelectedLayer(null); }}><Trash2 size={15} /></button></div>}<button className="reference-add" onClick={() => layerFileRef.current?.click()}><Plus size={17} /> 画像レイヤーを追加</button></div></section>}
             {rightTab === 'history' && <section className="panel-section"><div className="section-head"><span><Undo2 size={16} /> 編集履歴</span><span>{h.items.length} ステップ</span></div><div className="right-history">{h.items.map((item, index) => <button key={index} className={index === h.index ? 'selected' : ''} onClick={() => restoreHistory(index)}><span>{String(index + 1).padStart(2, '0')}</span>{index === 0 ? '開始' : item.project.layers.at(-1)?.name || '編集'}</button>)}</div></section>}
           </div>
         </aside>

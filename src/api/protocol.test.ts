@@ -1,5 +1,5 @@
 import { describe,it,expect } from 'vitest';
-import { buildRequest,decodeResult,decodeBatch,batchName,safeUrl,statusMessage } from './protocol';
+import { buildRequest,decodeResult,decodeBatch,decodeFile,batchName,fileName,fileUri,safeUrl,statusMessage } from './protocol';
 import { DEFAULT_SETTINGS } from '../types';
 import { compositePixels,importProject,exportProject } from '../lib/editor';
 describe('image protocol',()=>{
@@ -49,6 +49,28 @@ describe('image protocol',()=>{
     const result=decodeResult({candidates:[{content:{parts:[{text:'ok'}]},groundingMetadata:{groundingChunks:{},webSearchQueries:{},searchEntryPoint:{renderedContent:{}}}}],usageMetadata:{good:2,bad:Infinity,negative:-1}},request);
     expect(result).toMatchObject({text:'ok',citations:[],suggestions:[],usage:{good:2},searchHtml:undefined});
     expect(()=>decodeResult({candidates:[{content:{parts:[null]}}]},request)).toThrow('画像応答');
+  });
+  it('validates Google Files API identifiers, URIs, and fileData parts in requests',()=>{
+    expect(fileName('files/abc-123')).toBe('files/abc-123');
+    expect(()=>fileName('files/../secret')).toThrow('File ID');
+    expect(()=>fileUri('https://evil.example/v1beta/files/abc123')).toThrow('File URI');
+    const decoded=decodeFile({file:{name:'files/video1',uri:'https://generativelanguage.googleapis.com/v1beta/files/video1',mimeType:'video/mp4',state:'ACTIVE',displayName:'clip.mp4'}});
+    expect(decoded).toEqual({name:'files/video1',uri:'https://generativelanguage.googleapis.com/v1beta/files/video1',mimeType:'video/mp4',state:'ACTIVE',displayName:'clip.mp4'});
+    const req=buildRequest({prompt:'summarize clip',media:[{mimeType:'video/mp4',data:'',fileUri:decoded.uri,fileName:decoded.name,fileState:'ACTIVE'}],settings:DEFAULT_SETTINGS});
+    expect((req.contents as any[])[0].parts[1]).toEqual({fileData:{mimeType:'video/mp4',fileUri:decoded.uri}});
+    expect(()=>buildRequest({prompt:'wait',media:[{mimeType:'video/mp4',data:'',fileUri:decoded.uri,fileState:'PROCESSING'}],settings:DEFAULT_SETTINGS})).toThrow('処理中');
+    expect(()=>buildRequest({prompt:'too many',media:Array(15).fill({mimeType:'image/png',data:'',fileUri:'https://generativelanguage.googleapis.com/v1beta/files/img1',fileState:'ACTIVE'}),settings:DEFAULT_SETTINGS})).toThrow('14');
+  });
+  it('extracts grounding citations and search suggestions from Batch responses',()=>{
+    const image={inlineData:{mimeType:'image/png',data:'YQ=='}};
+    const batch=decodeBatch({name:'batches/grounded',done:true,response:{inlinedResponses:{inlinedResponses:[
+      {response:{candidates:[{content:{parts:[image]},groundingMetadata:{groundingChunks:[{web:{uri:'https://example.com/a',title:'Site A'}},{web:{uri:'javascript:bad()',title:'Bad'}}],webSearchQueries:['banana studio'],imageSearchQueries:['banana photo']}}]}}
+    ]}}});
+    expect(batch.citations).toEqual([{url:'https://example.com/a',title:'Site A'}]);
+    expect(batch.suggestions).toEqual([
+      {title:'banana studio',url:'https://www.google.com/search?q=banana%20studio'},
+      {title:'banana photo',url:'https://www.google.com/search?q=banana%20photo&udm=2'},
+    ]);
   });
 });
 describe('pixel preservation and project safety',()=>{

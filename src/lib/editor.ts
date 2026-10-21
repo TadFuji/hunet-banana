@@ -1,10 +1,15 @@
 import type { Layer, MediaInput, Project } from '../types';
+import { canvasBlendOperation, decodePsdBinary, encodePsdBinary, validBlendMode } from './psd';
+import type { PsdLayerData } from './psd';
+export { canvasBlendOperation, decodePsdBinary, encodePsdBinary, validBlendMode } from './psd';
 
 const IMAGE = /^data:image\/(png|jpeg|webp);base64,[A-Za-z0-9+/=]+$/;
 const MIME = new Set(['image/png','image/jpeg','image/webp','application/pdf','video/mp4','video/webm','video/quicktime']);
 const MAX_PIXELS = 32_000_000;
 export const MAX_PROJECT_PIXELS = 128_000_000;
 export const MAX_LAYER_OFFSET = 16384;
+export const MAX_INLINE_FILE_BYTES = 14 * 1024 * 1024;
+export const MAX_FILES_API_BYTES = 200 * 1024 * 1024;
 export function uid():string { return crypto.randomUUID(); }
 export function loadImage(dataUrl:string):Promise<HTMLImageElement> {
   if (!IMAGE.test(dataUrl)) return Promise.reject(new Error('PNG・JPEG・WebP画像を選んでください'));
@@ -14,8 +19,8 @@ export function createBlank(width:number,height:number):string {const c=document
 export async function renderProject(project:Project):Promise<HTMLCanvasElement> {
   const canvas=document.createElement('canvas');canvas.width=project.width;canvas.height=project.height;
   const ctx=canvas.getContext('2d')!;
-  for(const layer of project.layers) if(layer.visible){ctx.globalAlpha=layer.opacity;ctx.drawImage(await loadImage(layer.dataUrl),layer.x??0,layer.y??0,canvas.width,canvas.height);}
-  ctx.globalAlpha=1;return canvas;
+  for(const layer of project.layers) if(layer.visible){ctx.globalAlpha=layer.opacity;ctx.globalCompositeOperation=canvasBlendOperation(layer.blendMode);ctx.drawImage(await loadImage(layer.dataUrl),layer.x??0,layer.y??0,canvas.width,canvas.height);}
+  ctx.globalAlpha=1;ctx.globalCompositeOperation='source-over';return canvas;
 }
 export function canvasToMedia(canvas:HTMLCanvasElement,label?:string):MediaInput {return {mimeType:'image/png',data:canvas.toDataURL('image/png').split(',')[1],label};}
 /** Copy zero-mask pixels directly: preserving RGBA values does not depend on the model. */
@@ -41,7 +46,7 @@ export async function applyMask(baseDataUrl:string,candidateDataUrl:string,maskC
 export function downloadBlob(blob:Blob,filename:string):void {const url=URL.createObjectURL(blob);const a=document.createElement('a');a.href=url;a.download=filename;a.click();setTimeout(()=>URL.revokeObjectURL(url),1000);}
 export async function fileToMedia(file:File):Promise<MediaInput> {
   if(!MIME.has(file.type))throw new Error('PNG・JPEG・WebP・PDF・MP4・WebM・MOVに対応しています');
-  if(file.size>14*1024*1024)throw new Error('各ファイルは14MB以内にしてください。合計リクエストも20MB以内です');
+  if(file.size>MAX_INLINE_FILE_BYTES)throw new Error('各ファイルは14MB以内にしてください。合計リクエストも20MB以内です');
   const bytes=new Uint8Array(await file.arrayBuffer());let binary='';for(let i=0;i<bytes.length;i+=32768)binary+=String.fromCharCode(...bytes.subarray(i,i+32768));
   return {mimeType:file.type,data:btoa(binary),label:file.name.slice(0,150)};
 }
@@ -50,12 +55,55 @@ export function importProject(text:string):Project {
   const p=JSON.parse(text);
   if(!p || p.version!==1 || typeof p.name!=='string' || p.name.length>150 || !Number.isInteger(p.width)||!Number.isInteger(p.height)||p.width<1||p.height<1||p.width>16384||p.height>16384||p.width*p.height>MAX_PIXELS||!Array.isArray(p.layers)||p.layers.length>40||p.width*p.height*p.layers.length>MAX_PROJECT_PIXELS)throw new Error('プロジェクトの形式またはサイズが不正です');
   const ids=new Set<string>();
-  const layers=p.layers.map((l:Record<string,unknown>)=>{if(typeof l.id!=='string'||l.id.length>100||ids.has(l.id)||typeof l.name!=='string'||l.name.length>150||typeof l.dataUrl!=='string'||!IMAGE.test(l.dataUrl)||typeof l.visible!=='boolean'||typeof l.opacity!=='number'||!Number.isFinite(l.opacity)||l.opacity<0||l.opacity>1||!validOffset(l.x)||!validOffset(l.y))throw new Error('レイヤーの形式が不正です');ids.add(l.id);
-    const layer:Layer={id:l.id,name:l.name,dataUrl:l.dataUrl,visible:l.visible,opacity:l.opacity};if(l.x)layer.x=l.x as number;if(l.y)layer.y=l.y as number;return layer;});
+  const layers=p.layers.map((l:Record<string,unknown>)=>{if(typeof l.id!=='string'||l.id.length>100||ids.has(l.id)||typeof l.name!=='string'||l.name.length>150||typeof l.dataUrl!=='string'||!IMAGE.test(l.dataUrl)||typeof l.visible!=='boolean'||typeof l.opacity!=='number'||!Number.isFinite(l.opacity)||l.opacity<0||l.opacity>1||!validOffset(l.x)||!validOffset(l.y)||!validBlendMode(l.blendMode))throw new Error('レイヤーの形式が不正です');ids.add(l.id);
+    const layer:Layer={id:l.id,name:l.name,dataUrl:l.dataUrl,visible:l.visible,opacity:l.opacity};if(l.x)layer.x=l.x as number;if(l.y)layer.y=l.y as number;if(l.blendMode&&l.blendMode!=='normal')layer.blendMode=l.blendMode;return layer;});
   return {version:1,name:p.name,width:p.width,height:p.height,layers};
 }
 const validOffset=(value:unknown)=>value===undefined||Number.isInteger(value)&&Math.abs(value as number)<=MAX_LAYER_OFFSET;
 export function exportProject(project:Project):Blob {return new Blob([JSON.stringify(importProject(JSON.stringify(project)))],{type:'application/json'});}
+export async function exportPsd(project:Project):Promise<Blob> {
+  const safe=importProject(JSON.stringify(project));
+  const psdLayers:PsdLayerData[]=[];
+  for(const layer of safe.layers){
+    const img=await loadImage(layer.dataUrl);
+    const c=document.createElement('canvas');c.width=safe.width;c.height=safe.height;
+    const ctx=c.getContext('2d',{willReadFrequently:true})!;
+    ctx.drawImage(img,0,0,safe.width,safe.height);
+    const rgba=ctx.getImageData(0,0,safe.width,safe.height).data;
+    psdLayers.push({name:layer.name,visible:layer.visible,opacity:layer.opacity,blendMode:layer.blendMode??'normal',left:layer.x??0,top:layer.y??0,width:safe.width,height:safe.height,rgba});
+  }
+  const compositeCanvas=await renderProject(safe);
+  const compositeRgba=compositeCanvas.getContext('2d',{willReadFrequently:true})!.getImageData(0,0,safe.width,safe.height).data;
+  const binary=encodePsdBinary({width:safe.width,height:safe.height,layers:psdLayers,compositeRgba});
+  return new Blob([binary as unknown as BlobPart],{type:'image/vnd.adobe.photoshop'});
+}
+export async function importPsd(buffer:ArrayBuffer,filename='PSD project'):Promise<Project> {
+  const doc=decodePsdBinary(buffer);
+  const layers:Layer[]=doc.layers.map(l=>{
+    const canvas=document.createElement('canvas');canvas.width=doc.width;canvas.height=doc.height;
+    const ctx=canvas.getContext('2d')!;
+    let x:number|undefined;let y:number|undefined;
+    if(l.width===doc.width&&l.height===doc.height){
+      if(l.width>0&&l.height>0)ctx.putImageData(new ImageData(new Uint8ClampedArray(l.rgba),l.width,l.height),0,0);
+      if(l.left)x=l.left;if(l.top)y=l.top;
+    }else if(l.left>=0&&l.top>=0&&l.left+l.width<=doc.width&&l.top+l.height<=doc.height){
+      if(l.width>0&&l.height>0)ctx.putImageData(new ImageData(new Uint8ClampedArray(l.rgba),l.width,l.height),l.left,l.top);
+    }else{
+      if(l.width>0&&l.height>0){
+        const part=document.createElement('canvas');part.width=l.width;part.height=l.height;
+        part.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(l.rgba),l.width,l.height),0,0);
+        ctx.drawImage(part,0,0);
+      }
+      if(l.left)x=l.left;if(l.top)y=l.top;
+    }
+    const layer:Layer={id:uid(),name:l.name.slice(0,150),dataUrl:canvas.toDataURL('image/png'),visible:l.visible,opacity:l.opacity};
+    if(x)layer.x=x;if(y)layer.y=y;if(l.blendMode&&l.blendMode!=='normal')layer.blendMode=l.blendMode;
+    return layer;
+  });
+  const project=importProject(JSON.stringify({version:1,name:filename.replace(/\.[^.]+$/,'').slice(0,150)||'PSD project',width:doc.width,height:doc.height,layers}));
+  await validateProjectImages(project);
+  return project;
+}
 /** Validate every embedded image before replacing the current document. */
 export async function validateProjectImages(project:Project):Promise<void> {
   let pixels=0;

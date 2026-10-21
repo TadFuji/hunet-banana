@@ -50,8 +50,8 @@ Workerの通信先は `https://generativelanguage.googleapis.com` に固定し�
 
 | パス | 役割 |
 | --- | --- |
-| `src/App.tsx`, `src/lib/editor.ts` | 編集画面、描画・保存・画素合成 |
-| `src/api/client.ts`, `src/api/security.worker.ts` | Workerの生成・接続寿命、Googleへの通信 |
+| `src/App.tsx`, `src/lib/editor.ts`, `src/lib/psd.ts` | 編集画面、描画・保存・画素合成・PSDバイナリ読み書き |
+| `src/api/client.ts`, `src/api/security.worker.ts` | Workerの生成・接続寿命、Googleへの通信（生成・Batch・Files API） |
 | `src/api/protocol.ts`, `src/types.ts` | リクエスト・応答の検証、固定モデルと型 |
 | `security-headers.mjs`, `server.mjs`, `vercel-config.mjs` | CSPと静的配信 |
 | `scripts/prepare-release.mjs` | 配信設定と説明書PDFを `dist` に配置 |
