@@ -49,13 +49,16 @@ async function diagnoseModel():Promise<string>{
 }
 async function generate(input:GenerateRequest):Promise<unknown>{
   const body=buildRequest(input);
-  try { return decodeResult(await call(`/${generationVersion}/models/${MODEL}:generateContent`,body),body); }
+  const hasFileData=Array.isArray(body.contents)&&body.contents.some((t:any)=>Array.isArray(t?.parts)&&t.parts.some((p:any)=>Boolean(p?.fileData??p?.file_data)));
+  const version:'v1'|'v1beta'=hasFileData?'v1beta':generationVersion;
+  try { return decodeResult(await call(`/${version}/models/${MODEL}:generateContent`,body),body); }
   catch(error){
-    if(!(error instanceof ApiError)||error.status!==404)throw error;
-    if(generationVersion==='v1'&&await checkModel('v1beta',true)==='available'){
+    if(!(error instanceof ApiError)||error.status!==404&&!(version==='v1'&&error.status===400))throw error;
+    if(version==='v1'&&await checkModel('v1beta',true)==='available'){
       try {const result=decodeResult(await call(`/v1beta/models/${MODEL}:generateContent`,body),body);generationVersion='v1beta';return result;}
       catch(betaError){if(!(betaError instanceof ApiError)||betaError.status!==404)throw betaError;}
     }
+    if(error.status===400)throw error;
     throw new Error('指定モデル Nano Banana 2.1 を利用できません。キー設定の「モデル接続を確認（生成なし）」で確認してください');
   }
 }
