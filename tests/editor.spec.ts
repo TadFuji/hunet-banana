@@ -98,3 +98,136 @@ test('Batch create, restore, poll, and cancel use official fixed Google endpoint
   await expect(page.getByRole('button', { name: '中止', exact: true })).toBeDisabled(); await expect(page.getByAltText('Batch結果 1')).toBeVisible();
   await expect(page.locator('.batch-result')).toContainText('1枚 · エラー 1');
 });
+
+test('PSD export and import preserve layers, blend modes, and canvas pixels', async ({ page }) => {
+  await page.goto('/');
+  await expect(page.getByRole('tab', { name: 'レイヤー', exact: true })).toBeVisible({ timeout: 7000 });
+  const white = await png(page, '#ffffff');
+  const halfRed = await png(page, '#ff8080');
+  const project = {
+    version: 1,
+    name: 'PSD Blend Test',
+    width: 64,
+    height: 64,
+    layers: [
+      { id: 'l1', name: 'Base White', visible: true, opacity: 1, dataUrl: `data:image/png;base64,${white}` },
+      { id: 'l2', name: 'Top Multiply', visible: true, opacity: 1, dataUrl: `data:image/png;base64,${halfRed}` },
+    ],
+  };
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({ name: 'blend.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+  await expect(page.getByText('プロジェクトを読み込みました', { exact: true })).toBeVisible();
+  await page.getByRole('tab', { name: 'レイヤー', exact: true }).click();
+  await page.locator('.layer-row').filter({ hasText: 'Top Multiply' }).click();
+  await page.getByLabel('描画モード', { exact: true }).selectOption('multiply');
+  const downloadPromise = page.waitForEvent('download');
+  await page.getByRole('button', { name: 'PSD', exact: true }).click();
+  const download = await downloadPromise;
+  expect(download.suggestedFilename()).toBe('PSD Blend Test.psd');
+  const psdPath = await download.path();
+  expect(psdPath).toBeTruthy();
+
+  // Switch to a blank 1-layer project, then re-import the exported PSD
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({
+    name: 'reset.json',
+    mimeType: 'application/json',
+    buffer: Buffer.from(JSON.stringify({ version: 1, name: 'Reset', width: 64, height: 64, layers: [{ id: 'r', name: 'Reset', visible: true, opacity: 1, dataUrl: `data:image/png;base64,${white}` }] })),
+  });
+  await page.locator('input[accept=".psd,image/vnd.adobe.photoshop,application/x-photoshop"]').setInputFiles(psdPath!);
+  await expect(page.getByText('PSDファイルを読み込みました', { exact: true })).toBeVisible();
+  await expect(page.getByLabel('描画モード', { exact: true })).toHaveValue('multiply');
+  const pixel = await page.getByLabel('編集中の画像', { exact: true }).evaluate((c: HTMLCanvasElement) => Array.from(c.getContext('2d')!.getImageData(10, 10, 1, 1).data));
+  expect(pixel).toEqual([255, 128, 128, 255]);
+});
+
+test('Google Files API uploads media, refreshes state, sends fileData, and deletes remote file', async ({ page, context }) => {
+  await page.goto('/');
+  await expect(page.getByRole('tab', { name: 'レイヤー', exact: true })).toBeVisible({ timeout: 7000 });
+  const image = await png(page);
+  const calls: { method: string; url: string; body: string | null }[] = [];
+  let getCount = 0;
+  await context.route('https://generativelanguage.googleapis.com/**', async route => {
+    const req = route.request();
+    calls.push({ method: req.method(), url: req.url(), body: req.postData() });
+    if (req.url().includes('/upload/v1beta/files')) {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: { name: 'files/clip123', uri: 'https://generativelanguage.googleapis.com/v1beta/files/clip123', mimeType: 'video/mp4', state: 'PROCESSING', sizeBytes: '4096' } }) });
+    } else if (req.url().endsWith('/v1beta/files/clip123') && req.method() === 'GET') {
+      getCount += 1;
+      const state = getCount >= 4 ? 'ACTIVE' : 'PROCESSING';
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ file: { name: 'files/clip123', uri: 'https://generativelanguage.googleapis.com/v1beta/files/clip123', mimeType: 'video/mp4', state, sizeBytes: '4096' } }) });
+    } else if (req.url().endsWith('/v1beta/files/clip123') && req.method() === 'DELETE') {
+      await route.fulfill({ contentType: 'application/json', body: '{}' });
+    } else {
+      await route.fulfill({ contentType: 'application/json', body: JSON.stringify({ candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: image } }] } }] }) });
+    }
+  });
+  await connect(page);
+  await page.locator('input[type="file"]').nth(5).setInputFiles({ name: 'demo.mp4', mimeType: 'video/mp4', buffer: Buffer.from('fake-video-bytes') });
+  await expect(page.getByText('1件をFiles APIへアップロードしました', { exact: true })).toBeVisible();
+  await expect(page.locator('.file-api-badge')).toContainText('処理中');
+  await page.getByRole('button', { name: '参照1の状態を更新', exact: true }).click();
+  await expect(page.locator('.file-api-badge')).toContainText('Files API');
+  await page.getByRole('tab', { name: '新規生成', exact: true }).click();
+  await page.getByLabel('プロンプト').fill('summarize video');
+  await page.getByRole('button', { name: '画像を生成', exact: true }).click();
+  await expect(page.getByRole('dialog', { name: '生成結果の確認' })).toBeVisible();
+  const genCall = calls.find(c => c.url.includes(':generateContent'));
+  expect(genCall).toBeTruthy();
+  expect(JSON.parse(genCall!.body!).contents[0].parts[1]).toEqual({ fileData: { mimeType: 'video/mp4', fileUri: 'https://generativelanguage.googleapis.com/v1beta/files/clip123' } });
+  await page.getByRole('button', { name: '破棄' }).click();
+  await page.getByRole('button', { name: '参照1を削除', exact: true }).click();
+  await expect.poll(() => calls.some(c => c.method === 'DELETE' && c.url.endsWith('/v1beta/files/clip123'))).toBe(true);
+});
+
+test('Batch supports canvas mask editing, search grounding, and pixel-preserving adoption', async ({ page, context }) => {
+  await page.goto('/');
+  await expect(page.getByRole('tab', { name: 'レイヤー', exact: true })).toBeVisible({ timeout: 7000 });
+  const blue = await png(page, 'blue');
+  const green = await png(page, 'lime');
+  const project = { version: 1, name: 'Batch Mask', width: 64, height: 64, layers: [{ id: 'base', name: 'Original', visible: true, opacity: 1, dataUrl: `data:image/png;base64,${blue}` }] };
+  await page.locator('input[accept=".json,application/json"]').setInputFiles({ name: 'batch-mask.json', mimeType: 'application/json', buffer: Buffer.from(JSON.stringify(project)) });
+  await expect.poll(() => page.getByLabel('編集中の画像', { exact: true }).evaluate((c: HTMLCanvasElement) => c.width)).toBe(64);
+  await page.getByRole('button', { name: '矩形選択', exact: true }).click();
+  const box = (await page.getByLabel('編集キャンバス', { exact: true }).boundingBox())!;
+  await page.mouse.move(box.x + box.width * 0.25, box.y + box.height * 0.25); await page.mouse.down();
+  await page.mouse.move(box.x + box.width * 0.65, box.y + box.height * 0.65); await page.mouse.up();
+  await page.getByRole('checkbox', { name: 'Web検索' }).check();
+
+  let batchReqBody: any = null;
+  await context.route('https://generativelanguage.googleapis.com/**', async route => {
+    const req = route.request();
+    if (req.url().includes(':batchGenerateContent')) batchReqBody = req.postDataJSON();
+    await route.fulfill({
+      contentType: 'application/json',
+      body: JSON.stringify({
+        name: 'batches/mask-batch',
+        done: true,
+        response: {
+          inlinedResponses: {
+            inlinedResponses: [{
+              response: {
+                candidates: [{
+                  content: { parts: [{ inlineData: { mimeType: 'image/png', data: green } }] },
+                  groundingMetadata: { groundingChunks: [{ web: { uri: 'https://example.com/batch-ref', title: 'Batch Citation' } }] },
+                }],
+              },
+            }],
+          },
+        },
+      }),
+    });
+  });
+
+  await connect(page);
+  await page.getByRole('button', { name: 'Batch生成', exact: true }).click();
+  await page.getByRole('checkbox', { name: /Batchでキャンバスの画像を編集/ }).check();
+  await page.getByLabel('Batch生成の指示', { exact: true }).fill('make center green');
+  await page.getByRole('button', { name: 'Batchを開始', exact: true }).click();
+  await expect(page.getByAltText('Batch結果 1')).toBeVisible();
+  expect(batchReqBody.batch.inputConfig.requests.requests[0].request.tools).toEqual([{ google_search: { searchTypes: { webSearch: {} } } }]);
+  expect(batchReqBody.batch.inputConfig.requests.requests[0].request.contents[0].parts.filter((p: any) => p.inlineData)).toHaveLength(2);
+  await expect(page.getByRole('link', { name: 'Batch Citation', exact: true })).toHaveAttribute('href', 'https://example.com/batch-ref');
+  await page.getByAltText('Batch結果 1').click();
+  await expect.poll(() => page.getByLabel('編集中の画像', { exact: true }).evaluate((c: HTMLCanvasElement) => Array.from(c.getContext('2d')!.getImageData(30, 30, 1, 1).data))).toEqual([0, 255, 0, 255]);
+  const cornerPixel = await page.getByLabel('編集中の画像', { exact: true }).evaluate((c: HTMLCanvasElement) => Array.from(c.getContext('2d')!.getImageData(2, 2, 1, 1).data));
+  expect(cornerPixel).toEqual([0, 0, 255, 255]);
+});

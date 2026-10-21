@@ -24,9 +24,9 @@ flowchart LR
 |---|---|
 | 永続化 | キーをCookie、各Storage、IndexedDB、ファイル、履歴に保存しない。プロジェクト書き出しは許可したスキーマだけを採用 |
 | 通信 | 固定Googleオリジンと固定APIパス。キーはヘッダーにだけ付与。credentials omit、cache no-store、redirect error |
-| URLの注入 | モデルを固定。Batch IDは `batches/[英数字・_・-]` のみ。入力からホストや任意パスを指定できない |
-| Worker | Workerレスポンス自身にもCSP。Google API以外へ接続できない。中断・180秒のタイムアウト・80MBの応答上限 |
-| 画面 | connect-src none、同一配信のスクリプトのみ、eval禁止、外部画像・フォント・埋め込み禁止。画像入力はPNG/JPEG/WebPのdata URLだけ |
+| URLの注入 | モデルを固定。Batch IDは `batches/[英数字・_・-]` のみ、Files APIの識別子は `files/[英数字・_・-]`、URIは `https://generativelanguage.googleapis.com/v1(beta)/files/[英数字・_・-]` のみ。入力からホストや任意パスを指定できない |
+| Worker | Workerレスポンス自身にもCSP。Google API以外へ接続できない。中断・180秒のタイムアウト（Files APIアップロードは300秒）・80MBの応答上限 |
+| 画面 | connect-src none、同一配信のスクリプトのみ、eval禁止、外部画像・フォント・埋め込み禁止。画像入力はPNG/JPEG/WebPのdata URL（またはローカルでデコード検証したPSDバイナリから生成したPNG data URL）だけ |
 | 結果表示 | Reactのテキスト表示。リンクは認証情報のないHTTPSだけ。新規タブはnoopener/noreferrer |
 | 検索HTML | opaque originのsandbox iframe。script禁止、外部リソース禁止、form禁止。利用者がクリックする検索リンクは別タブに開く |
 | 応答・ログ | Googleの生エラー本文を画面に出さない。成功応答内のキー文字列を再帰的に伏字化。アプリの要求・応答ログを出さない |
@@ -42,12 +42,12 @@ flowchart LR
 
 ## 保存するもの・Googleへ送るもの
 
-- IndexedDB: 保存ボタンを押した画像プロジェクト1件。APIキー・会話・思考署名・参照PDF/動画は含まない。
+- IndexedDB: 保存ボタンを押した画像プロジェクト1件。APIキー・会話・思考署名・参照PDF/動画・Files APIのURIは含まない。
 - localStorage: 最後のBatch IDと状態。過去のID全件を管理する機能ではないため、追加ジョブ作成前に必要なIDを控える。
-- タブのメモリ: 編集履歴、描画選択、参照素材、採用した生成の会話・思考署名。
-- Google: 生成時の指示、素材、必要な履歴、キー。BatchではGoogle側にジョブを作成する。
+- タブのメモリ: 編集履歴、描画選択、参照素材（インライン素材およびFiles API参照情報）、採用した生成の会話・思考署名。
+- Google: 生成時の指示、素材、必要な履歴、キー。Files API使用時はGoogleのファイル保管領域（通常48時間保持、または削除ボタンで明示削除）に素材を送り、BatchではGoogle側にジョブを作成する。
 
-キーの切断はGoogleに送った素材の削除や、Batchの中止にはなりません。Batchの中止は別のボタンで明示的に依頼します。中止要求の受理は即時停止や請求取消の保証ではありません。Googleの保持・学習利用・料金の条件はサービス契約に依存します。[GoogleのAPIキーガイド](https://ai.google.dev/gemini-api/docs/api-key)、[Gemini APIの利用条件](https://ai.google.dev/gemini-api/terms)、[Batch APIガイド](https://ai.google.dev/gemini-api/docs/batch-api)
+キーの切断はGoogleに送った素材（Files APIでアップロードしたファイルを含む）の自動削除や、Batchの中止にはなりません。Files APIのファイル削除やBatchの中止は、キー接続中にそれぞれのボタンで明示的に依頼します。中止要求の受理は即時停止や請求取消の保証ではありません。Googleの保持・学習利用・料金の条件はサービス契約に依存します。[GoogleのAPIキーガイド](https://ai.google.dev/gemini-api/docs/api-key)、[Gemini APIの利用条件](https://ai.google.dev/gemini-api/terms)、[Batch APIガイド](https://ai.google.dev/gemini-api/docs/batch-api)
 
 Googleは本番利用でサーバー経由の鍵管理を推奨します。本アプリは「利用者自身の鍵を運営者のサーバーに渡さない」という要件から、ブラウザ直接接続を選びました。このトレードオフを、サーバー側の秘密管理と同等の安全性とは見なしません。[APIキーガイド](https://ai.google.dev/gemini-api/docs/api-key)
 

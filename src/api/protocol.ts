@@ -1,17 +1,39 @@
 import { MODEL, RATIOS } from '../types';
-import type { GenerateRequest, GenerateResult, ConversationTurn, GeneratedImage, Citation, BatchJob } from '../types';
+import type { GenerateRequest, GenerateResult, ConversationTurn, GeneratedImage, Citation, BatchJob, UploadedFile } from '../types';
 export const ORIGIN='https://generativelanguage.googleapis.com';
-const MIME=new Set(['image/png','image/jpeg','image/webp','application/pdf','video/mp4','video/webm','video/quicktime']);
+export const ALLOWED_MIME=new Set(['image/png','image/jpeg','image/webp','application/pdf','video/mp4','video/webm','video/quicktime']);
+const MIME=ALLOWED_MIME;
+export function fileName(value:unknown):string {if(typeof value!=='string'||!/^files\/[A-Za-z0-9_-]{1,200}$/.test(value))throw new Error('File IDの形式が不正です');return value;}
+export function fileUri(value:unknown):string {if(typeof value!=='string'||!/^https:\/\/generativelanguage\.googleapis\.com\/v1(?:beta)?\/files\/[A-Za-z0-9_-]{1,200}$/.test(value))throw new Error('File URIの形式が不正です');return value;}
+export function decodeFile(raw:any):UploadedFile {
+  const f=raw?.file&&typeof raw.file==='object'?raw.file:raw;
+  const name=fileName(f?.name);const uri=fileUri(f?.uri);
+  const mimeType=f?.mimeType??f?.mime_type;
+  if(typeof mimeType!=='string'||!MIME.has(mimeType))throw new Error('Files API応答の形式が不正です');
+  const state=f?.state??'ACTIVE';
+  if(typeof state!=='string'||!/^[A-Z_]{1,40}$/.test(state))throw new Error('Files API応答の形式が不正です');
+  if(state==='FAILED')throw new Error('Files APIでのファイル処理に失敗しました');
+  return {name,uri,mimeType,state,displayName:typeof f?.displayName==='string'?f.displayName.slice(0,150):undefined};
+}
 export function buildRequest(input:GenerateRequest):Record<string,unknown>{
   if(!input || typeof input.prompt!=='string'||!input.prompt.trim()||input.prompt.length>16000)throw new Error('指示は1〜16,000文字で入力してください');
   const s=input.settings;
   if(!s||!['1K','2K','4K'].includes(s.size)||!(RATIOS as readonly string[]).includes(s.ratio)||!['minimal','medium','high'].includes(s.thinking)||typeof s.webSearch!=='boolean'||typeof s.imageSearch!=='boolean')throw new Error('生成設定を確認してください');
-  if(!Array.isArray(input.media)||input.media.length>16||input.media.filter(m=>m.mimeType.startsWith('image/')).length>14)throw new Error('参照画像は14枚までです');
+  if(!Array.isArray(input.media)||input.media.length>16||input.media.filter(m=>m?.mimeType?.startsWith('image/')).length>14)throw new Error('参照画像は14枚までです');
   const parts:Record<string,unknown>[]=[{text:input.prompt}];
-  for(const m of input.media){if(!MIME.has(m.mimeType)||!m.data||!/^[A-Za-z0-9+/=]+$/.test(m.data))throw new Error('参照ファイルの形式が不正です');parts.push({inlineData:{mimeType:m.mimeType,data:m.data}});}
+  for(const m of input.media){
+    if(!m||!MIME.has(m.mimeType))throw new Error('参照ファイルの形式が不正です');
+    if(m.fileUri){
+      if(m.fileState&&m.fileState!=='ACTIVE')throw new Error('Files APIのファイルが処理中です。完了後に生成してください');
+      parts.push({fileData:{mimeType:m.mimeType,fileUri:fileUri(m.fileUri)}});
+    }else{
+      if(!m.data||!/^[A-Za-z0-9+/=]+$/.test(m.data))throw new Error('参照ファイルの形式が不正です');
+      parts.push({inlineData:{mimeType:m.mimeType,data:m.data}});
+    }
+  }
   const history=[...(input.history??[])];
   if(history.length>12||history.some(t=>!['user','model'].includes(t.role)||!Array.isArray(t.parts)))throw new Error('会話履歴を確認してください');
-  const countImages=(turns:ConversationTurn[])=>turns.reduce((n,t)=>n+t.parts.filter(p=>{const d=(p.inlineData??p.inline_data) as {mimeType?:string;mime_type?:string}|undefined;return (d?.mimeType??d?.mime_type??'').startsWith('image/');}).length,0);
+  const countImages=(turns:ConversationTurn[])=>turns.reduce((n,t)=>n+t.parts.filter(p=>{const d=(p.inlineData??p.inline_data??p.fileData??p.file_data) as {mimeType?:string;mime_type?:string}|undefined;return (d?.mimeType??d?.mime_type??'').startsWith('image/');}).length,0);
   while(history.length&&countImages([...history,{role:'user',parts}])>14)history.splice(0,2);
   const body:Record<string,unknown>={contents:[...history,{role:'user',parts}],generationConfig:{responseModalities:['TEXT','IMAGE'],thinkingConfig:{thinkingLevel:s.thinking.toUpperCase()},imageConfig:{imageSize:s.size,aspectRatio:s.ratio}}};
   if(s.webSearch||s.imageSearch)body.tools=[{google_search:{searchTypes:{...(s.webSearch?{webSearch:{}}:{}),...(s.imageSearch?{imageSearch:{}}:{})}}}];
@@ -45,9 +67,11 @@ export function decodeBatch(raw:any):BatchJob {
   const entries=raw.response?.inlinedResponses?.inlinedResponses??raw.response?.output?.inlinedResponses?.inlinedResponses??batch.output?.inlinedResponses?.inlinedResponses??[];
   const state=batch.state??raw.metadata?.state??(raw.done?(raw.error?'BATCH_STATE_FAILED':'BATCH_STATE_SUCCEEDED'):'BATCH_STATE_PENDING');
   if(typeof state!=='string'||!/^[A-Z_]{1,80}$/.test(state)||!Array.isArray(entries))throw new Error('Batch応答の形式が不正です');
-  const images:GeneratedImage[]=[];let errors=0;
-  for(const entry of entries){if(!entry||entry.error){errors++;continue;}try{const result=decodeResult(entry.response,{contents:[]});if(!result.images.length){errors++;continue;}images.push(...result.images);}catch{errors++;}}
+  const images:GeneratedImage[]=[];const citations:Citation[]=[];const suggestions:Citation[]=[];let errors=0;
+  for(const entry of entries){if(!entry||entry.error){errors++;continue;}try{const result=decodeResult(entry.response,{contents:[]});if(!result.images.length){errors++;continue;}images.push(...result.images);for(const c of result.citations)if(!citations.some(x=>x.url===c.url))citations.push(c);for(const s of result.suggestions)if(!suggestions.some(x=>x.url===s.url))suggestions.push(s);}catch{errors++;}}
   const created=batch.createTime??raw.metadata?.createTime;
-  return {name,state,created:typeof created==='string'?created:undefined,images,errors};
+  const out:BatchJob={name,state,created:typeof created==='string'?created:undefined,images,errors};
+  if(citations.length)out.citations=citations;if(suggestions.length)out.suggestions=suggestions;
+  return out;
 }
 export function statusMessage(status:number):string {return status===400?'指示・ファイル・モデル設定を確認してください':status===401||status===403?'APIキーの権限・制限・課金設定を確認してください':status===429?'利用枠またはレート制限に達しました。Googleの割り当てを確認してください':status===404?'指定モデルまたはBatchが利用できません':'Googleとの通信に失敗しました。時間を置いて再試行してください';}
