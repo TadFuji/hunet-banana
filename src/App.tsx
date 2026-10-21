@@ -594,8 +594,8 @@ export default function App() {
     if (valid.some(file => file.size < 1 || file.size > MAX_FILES_API_BYTES)) { setError('Files APIは200MB以内のファイルに対応しています'); return; }
     const keySession = geminiClient.session();
     setBusy(true); setError(''); setStatus('Google Files APIへアップロードしています…');
+    const items: MediaInput[] = [];
     try {
-      const items: MediaInput[] = [];
       for (const file of valid) {
         const bytes = await file.arrayBuffer();
         let uploaded = await geminiClient.uploadFile({ mimeType: file.type, bytes, label: file.name }, keySession);
@@ -609,6 +609,9 @@ export default function App() {
       setReferences(previous => [...previous, ...items]);
       setStatus(`${items.length}件をFiles APIへアップロードしました`); setError('');
     } catch (caught) {
+      for (const item of items) {
+        if (item.fileName) void geminiClient.deleteFile(item.fileName, keySession).catch(() => {});
+      }
       setError(caught instanceof Error ? caught.message : 'Files APIへアップロードできませんでした');
     } finally { setBusy(false); }
   };

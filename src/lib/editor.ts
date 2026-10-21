@@ -82,22 +82,13 @@ export async function importPsd(buffer:ArrayBuffer,filename='PSD project'):Promi
   const layers:Layer[]=doc.layers.map(l=>{
     const canvas=document.createElement('canvas');canvas.width=doc.width;canvas.height=doc.height;
     const ctx=canvas.getContext('2d')!;
-    let x:number|undefined;let y:number|undefined;
-    if(l.width===doc.width&&l.height===doc.height){
-      if(l.width>0&&l.height>0)ctx.putImageData(new ImageData(new Uint8ClampedArray(l.rgba),l.width,l.height),0,0);
-      if(l.left)x=l.left;if(l.top)y=l.top;
-    }else if(l.left>=0&&l.top>=0&&l.left+l.width<=doc.width&&l.top+l.height<=doc.height){
-      if(l.width>0&&l.height>0)ctx.putImageData(new ImageData(new Uint8ClampedArray(l.rgba),l.width,l.height),l.left,l.top);
-    }else{
-      if(l.width>0&&l.height>0){
-        const part=document.createElement('canvas');part.width=l.width;part.height=l.height;
-        part.getContext('2d')!.putImageData(new ImageData(new Uint8ClampedArray(l.rgba),l.width,l.height),0,0);
-        ctx.drawImage(part,0,0);
-      }
-      if(l.left)x=l.left;if(l.top)y=l.top;
+    const ox=l.width<=doc.width?(l.left>=0&&l.left+l.width<=doc.width?0:l.left):Math.max(l.left,Math.min(0,l.left+l.width-doc.width));
+    const oy=l.height<=doc.height?(l.top>=0&&l.top+l.height<=doc.height?0:l.top):Math.max(l.top,Math.min(0,l.top+l.height-doc.height));
+    if(l.width>0&&l.height>0){
+      ctx.putImageData(new ImageData(new Uint8ClampedArray(l.rgba),l.width,l.height),l.left-ox,l.top-oy);
     }
     const layer:Layer={id:uid(),name:l.name.slice(0,150),dataUrl:canvas.toDataURL('image/png'),visible:l.visible,opacity:l.opacity};
-    if(x)layer.x=x;if(y)layer.y=y;if(l.blendMode&&l.blendMode!=='normal')layer.blendMode=l.blendMode;
+    if(ox)layer.x=ox;if(oy)layer.y=oy;if(l.blendMode&&l.blendMode!=='normal')layer.blendMode=l.blendMode;
     return layer;
   });
   const project=importProject(JSON.stringify({version:1,name:filename.replace(/\.[^.]+$/,'').slice(0,150)||'PSD project',width:doc.width,height:doc.height,layers}));

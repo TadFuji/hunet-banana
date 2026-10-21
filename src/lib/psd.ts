@@ -297,6 +297,7 @@ export function decodePsdBinary(input: ArrayBuffer | Uint8Array): PsdDocumentDat
         right: number;
         channels: { id: number; length: number }[];
         isGroupDivider: boolean;
+        mask?: { top: number; left: number; bottom: number; right: number; defaultColor: number; flags: number };
       };
       const records: RawRecord[] = [];
       const decoder = new TextDecoder('utf-8', { fatal: false });
@@ -331,6 +332,20 @@ export function decodePsdBinary(input: ArrayBuffer | Uint8Array): PsdDocumentDat
         if (extraLen < 8) throw new Error('PSDレイヤーの拡張データが不正です');
         const maskLen = view.getUint32(pos); pos += 4;
         if (pos + maskLen > extraEnd) throw new Error('PSDレイヤーのマスクデータが不正です');
+        let mask: RawRecord['mask'];
+        if (maskLen >= 20) {
+          let mTop = view.getInt32(pos);
+          let mLeft = view.getInt32(pos + 4);
+          let mBottom = view.getInt32(pos + 8);
+          let mRight = view.getInt32(pos + 12);
+          const defaultColor = bytes[pos + 16];
+          const mFlags = bytes[pos + 17];
+          if (mFlags & 1) {
+            mTop += top; mBottom += top;
+            mLeft += left; mRight += left;
+          }
+          mask = { top: mTop, left: mLeft, bottom: mBottom, right: mRight, defaultColor, flags: mFlags };
+        }
         pos += maskLen;
 
         const rangesLen = view.getUint32(pos); pos += 4;
@@ -385,6 +400,7 @@ export function decodePsdBinary(input: ArrayBuffer | Uint8Array): PsdDocumentDat
           right,
           channels,
           isGroupDivider,
+          mask,
         });
       }
 
@@ -407,16 +423,26 @@ export function decodePsdBinary(input: ArrayBuffer | Uint8Array): PsdDocumentDat
         }
 
         const planes = new Map<number, Uint8Array>();
+        const mw = rec.mask ? Math.max(0, rec.mask.right - rec.mask.left) : 0;
+        const mh = rec.mask ? Math.max(0, rec.mask.bottom - rec.mask.top) : 0;
+        if (mw > 16384 || mh > 16384 || mw * mh > MAX_PIXELS) {
+          throw new Error('画像は各辺16,384px・3,200万画素以内にしてください');
+        }
         for (const ch of rec.channels) {
           requireBytes(ch.length);
           const chEnd = pos + ch.length;
-          if (ch.length >= 2 && pixelCount > 0 && (ch.id === 0 || ch.id === 1 || ch.id === 2 || ch.id === -1)) {
+          const isColorOrAlpha = ch.id === 0 || ch.id === 1 || ch.id === 2 || ch.id === -1;
+          const isUserMask = (ch.id === -2 || ch.id === -3) && rec.mask && (rec.mask.flags & 2) === 0;
+          const cw = isUserMask ? mw : lw;
+          const chHeight = isUserMask ? mh : lh;
+          const chPixels = cw * chHeight;
+          if (ch.length >= 2 && chPixels > 0 && (isColorOrAlpha || isUserMask)) {
             const compression = view.getUint16(pos);
             if (compression === 0) {
-              if (ch.length < 2 + pixelCount) throw new Error('PSDチャンネルデータが不足しています');
-              planes.set(ch.id, bytes.subarray(pos + 2, pos + 2 + pixelCount));
+              if (ch.length < 2 + chPixels) throw new Error('PSDチャンネルデータが不足しています');
+              planes.set(ch.id, bytes.subarray(pos + 2, pos + 2 + chPixels));
             } else if (compression === 1) {
-              planes.set(ch.id, decodeRleChannel(bytes, pos + 2, lh, lw));
+              planes.set(ch.id, decodeRleChannel(bytes, pos + 2, chHeight, cw));
             } else {
               throw new Error('未対応のPSD圧縮方式（ZIP等）です。標準PSDで保存してください');
             }
@@ -430,11 +456,24 @@ export function decodePsdBinary(input: ArrayBuffer | Uint8Array): PsdDocumentDat
         const gPlane = planes.get(1);
         const bPlane = planes.get(2);
         const aPlane = planes.get(-1);
+        const mPlane = planes.get(-3) ?? planes.get(-2);
+        const activeMask = rec.mask && (rec.mask.flags & 2) === 0 && mPlane ? rec.mask : undefined;
         for (let p = 0; p < pixelCount; p++) {
           rgba[p * 4] = rPlane ? rPlane[p] : 0;
           rgba[p * 4 + 1] = gPlane ? gPlane[p] : 0;
           rgba[p * 4 + 2] = bPlane ? bPlane[p] : 0;
-          rgba[p * 4 + 3] = aPlane ? aPlane[p] : 255;
+          let alpha = aPlane ? aPlane[p] : 255;
+          if (activeMask && mPlane) {
+            const lx = rec.left + (p % lw);
+            const ly = rec.top + Math.floor(p / lw);
+            let mv = activeMask.defaultColor;
+            if (lx >= activeMask.left && lx < activeMask.right && ly >= activeMask.top && ly < activeMask.bottom) {
+              mv = mPlane[(ly - activeMask.top) * mw + (lx - activeMask.left)];
+            }
+            if (activeMask.flags & 4) mv = 255 - mv;
+            alpha = Math.round((alpha * mv) / 255);
+          }
+          rgba[p * 4 + 3] = alpha;
         }
 
         layers.push({
