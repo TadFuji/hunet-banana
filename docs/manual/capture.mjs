@@ -118,7 +118,7 @@ await page.getByRole('tab', { name: '新規生成', exact: true }).click();
 await page.getByLabel('解像度', { exact: true }).selectOption('2K');
 await page.getByLabel('アスペクト比', { exact: true }).selectOption('16:9');
 const refData = await page.getByLabel('編集中の画像', { exact: true }).evaluate(c=>c.toDataURL('image/png').split(',')[1]);
-await page.locator('input[multiple]').setInputFiles({name:'参考パッケージ.png',mimeType:'image/png',buffer:Buffer.from(refData,'base64')});
+await page.locator('input[multiple]').first().setInputFiles({name:'参考パッケージ.png',mimeType:'image/png',buffer:Buffer.from(refData,'base64')});
 await shot('references', '.right-panel');
 await page.locator('summary', {hasText:'ファイル'}).click();
 await shot('file-menu', 'details[open] .menu-pop');
