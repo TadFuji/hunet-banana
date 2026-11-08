@@ -9,3 +9,6 @@ playwright-report/
 tmp/pdfs/
 docs/manual/layout-check.json
 .vercel/
+
+# Claude Code personal permission rules (may contain secrets)
+.claude/settings.local.json
